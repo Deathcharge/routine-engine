@@ -1,0 +1,31 @@
+# Core dependencies
+fastapi>=0.100.0
+uvicorn>=0.23.0
+sqlalchemy>=2.0.0
+pydantic>=2.0.0
+httpx>=0.24.0
+redis>=5.0.0
+aioredis>=2.0.0
+python-dotenv>=1.0.0
+cryptography>=41.0.0
+python-multipart>=0.0.6
+aiofiles>=23.0.0
+psycopg2-binary>=2.9.0
+APScheduler>=3.10.0
+
+# Integration dependencies
+discord.py>=2.3.0
+boto3>=1.28.0
+airtable-python-wrapper>=0.15.0
+google-api-python-client>=2.100.0
+slack-sdk>=3.23.0
+PyGithub>=2.1.0
+
+# Development dependencies (optional)
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+black>=23.9.0
+flake8>=6.1.0
+mypy>=1.5.0
+isort>=5.12.0
