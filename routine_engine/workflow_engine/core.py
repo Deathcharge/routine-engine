@@ -1156,6 +1156,11 @@ class CodeAction(Chain):
             import contextlib
             from io import StringIO
 
+            raise ValueError(
+                "Legacy in-process code actions are disabled; use an explicitly registered Routine Engine action"
+            )
+
+            # Retained temporarily as archived source; unreachable by design.
             stdout_capture = StringIO()
 
             # Define safe builtins for workflow code execution

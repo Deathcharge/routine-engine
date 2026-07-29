@@ -411,8 +411,13 @@ class FileSystemIntegration(Integration):
         raw_path = kwargs.get("path", "")
 
         # Path traversal protection: resolve and verify path stays within sandbox
-        resolved = os.path.realpath(os.path.join(SANDBOX_ROOT, raw_path))
-        if not resolved.startswith(os.path.realpath(SANDBOX_ROOT)):
+        sandbox_root = os.path.realpath(SANDBOX_ROOT)
+        resolved = os.path.realpath(os.path.join(sandbox_root, raw_path))
+        try:
+            contained = os.path.commonpath((sandbox_root, resolved)) == sandbox_root
+        except ValueError:
+            contained = False
+        if not contained:
             return ToolResult(success=False, output=None, error="Path traversal detected — access denied")
 
         path = resolved

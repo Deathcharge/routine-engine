@@ -1,45 +1,60 @@
-"""Test suite for task functionality."""
+from __future__ import annotations
+
+from typing import Any
 
 import pytest
 
-
-class TestTaskCreation:
-    """Test task creation."""
-    
-    @pytest.mark.task
-    def test_task_creation(self, mock_task):
-        """Test task creation."""
-        assert mock_task.id == "task-1"
-        assert mock_task.name == "TestTask"
-    
-    @pytest.mark.task
-    def test_task_status(self, mock_task):
-        """Test task status."""
-        assert mock_task.status == "pending"
+from routine_engine import ActionContext, RoutineEngine, RunStatus
+from routine_engine.builtins import format_text, identity, merge, register_builtin_actions
 
 
-class TestTaskExecution:
-    """Test task execution."""
-    
-    @pytest.mark.task
-    def test_execute_task(self, mock_task):
-        """Test task execution."""
-        result = mock_task.execute()
-        assert result["result"] == "success"
-    
-    @pytest.mark.task
-    def test_get_task_result(self, mock_task):
-        """Test getting task result."""
-        result = mock_task.get_result()
-        assert result["output"] == "data"
+def _context(params: dict[str, Any], inputs: dict[str, Any] | None = None) -> ActionContext:
+    return ActionContext(
+        run_id="run",
+        workflow_id="workflow",
+        step_id="step",
+        attempt=1,
+        inputs=inputs or {},
+        params=params,
+        outputs={},
+    )
 
 
-class TestTaskConfiguration:
-    """Test task configuration."""
-    
-    @pytest.mark.task
-    def test_task_config(self, mock_task_config):
-        """Test task configuration."""
-        assert mock_task_config["name"] == "TestTask"
-        assert mock_task_config["timeout"] == 300
-        assert mock_task_config["retries"] == 3
+def test_builtin_actions_are_small_and_side_effect_free() -> None:
+    assert identity(_context({"value": 3})) == 3
+    assert identity(_context({}, {"name": "Ada"})) == {"name": "Ada"}
+    assert merge(_context({"a": 1})) == {"a": 1}
+    assert format_text(_context({"template": "Hi {name}", "values": {"name": "Ada"}})) == "Hi Ada"
+
+
+def test_format_builtin_validates_parameters() -> None:
+    with pytest.raises(ValueError, match="template"):
+        format_text(_context({}))
+    with pytest.raises(ValueError, match="values"):
+        format_text(_context({"template": "x", "values": []}))
+
+
+def test_builtin_registration_supports_complete_demo_journey() -> None:
+    engine = RoutineEngine()
+    register_builtin_actions(engine)
+    result = engine.run(
+        {
+            "id": "demo",
+            "steps": [
+                {"id": "name", "action": "identity", "with": {"value": "{{ input.name }}"}},
+                {
+                    "id": "greeting",
+                    "action": "format",
+                    "needs": ["name"],
+                    "with": {
+                        "template": "Hello, {name}!",
+                        "values": {"name": "{{ steps.name.output }}"},
+                    },
+                },
+            ],
+        },
+        {"name": "Samsarix"},
+    )
+
+    assert result.status is RunStatus.SUCCESS
+    assert result.steps["greeting"].output == "Hello, Samsarix!"

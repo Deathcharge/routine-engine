@@ -22,7 +22,8 @@ We are committed to providing a welcoming, inclusive, and harassment-free enviro
 
 ## Reporting
 
-Report unacceptable behavior to the maintainers.
+Report unacceptable behavior to [support@samsarix.com](mailto:support@samsarix.com). Samsarix LLC will review reports as privately as practical.
+
 
 ## Enforcement
 

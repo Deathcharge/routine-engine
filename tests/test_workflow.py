@@ -1,73 +1,136 @@
-"""Test suite for workflow functionality."""
+from __future__ import annotations
+
+from typing import Any
 
 import pytest
 
-
-class TestWorkflowCreation:
-    """Test workflow creation."""
-    
-    @pytest.mark.workflow
-    def test_workflow_creation(self, mock_workflow):
-        """Test workflow creation."""
-        assert mock_workflow.id == "workflow-1"
-        assert mock_workflow.name == "TestWorkflow"
-    
-    @pytest.mark.workflow
-    def test_workflow_status(self, mock_workflow):
-        """Test workflow status."""
-        assert mock_workflow.status == "active"
+from routine_engine import RoutineEngine, Workflow, WorkflowValidationError
+from routine_engine.models import MAX_CONCURRENCY, MAX_STEPS
 
 
-class TestWorkflowExecution:
-    """Test workflow execution."""
-    
-    @pytest.mark.workflow
-    def test_execute_workflow(self, mock_workflow):
-        """Test workflow execution."""
-        result = mock_workflow.execute()
-        assert result["result"] == "success"
-    
-    @pytest.mark.workflow
-    def test_get_workflow_status(self, mock_workflow):
-        """Test getting workflow status."""
-        status = mock_workflow.get_status()
-        assert status == "active"
+def test_workflow_round_trip_preserves_public_shape(workflow_factory: Any) -> None:
+    raw = workflow_factory(
+        description="A real workflow",
+        max_concurrency=2,
+        steps=[
+            {
+                "id": "first",
+                "action": "echo",
+                "with": {"value": 3},
+                "retries": 2,
+                "retry_delay_seconds": 0.25,
+            },
+            {"id": "second", "action": "merge", "needs": ["first"]},
+        ],
+    )
+
+    definition = Workflow.from_dict(raw)
+
+    assert definition.to_dict() == raw
 
 
-class TestWorkflowConfiguration:
-    """Test workflow configuration."""
-    
-    @pytest.mark.workflow
-    def test_workflow_config(self, mock_workflow_config):
-        """Test workflow configuration."""
-        assert mock_workflow_config["name"] == "TestWorkflow"
-        assert len(mock_workflow_config["steps"]) == 2
-        assert mock_workflow_config["enabled"] is True
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        ([], "JSON object"),
+        ({"id": "bad id", "steps": [{}]}, "id must start"),
+        ({"id": "ok"}, "non-empty array"),
+        ({"id": "ok", "steps": []}, "non-empty array"),
+        ({"id": "ok", "steps": [None]}, "must be an object"),
+        ({"id": "ok", "steps": [{"id": "x", "action": "echo", "needs": "y"}]}, "array"),
+        (
+            {"id": "ok", "steps": [{"id": "x", "action": "echo", "needs": ["y", "y"]}]},
+            "duplicates",
+        ),
+        ({"id": "ok", "steps": [{"id": "x", "action": "echo", "with": []}]}, "object"),
+        ({"id": "ok", "steps": [{"id": "x", "action": "echo", "retries": True}]}, "integer"),
+        ({"id": "ok", "steps": [{"id": "x", "action": "echo", "retries": 11}]}, "from 0"),
+        (
+            {"id": "ok", "steps": [{"id": "x", "action": "echo", "retry_delay_seconds": "1"}]},
+            "number",
+        ),
+        (
+            {"id": "ok", "steps": [{"id": "x", "action": "echo", "retry_delay_seconds": 61}]},
+            "must be from",
+        ),
+        (
+            {"id": "ok", "steps": [{"id": "x", "action": "echo"}], "description": 3},
+            "description",
+        ),
+        (
+            {"id": "ok", "steps": [{"id": "x", "action": "echo"}], "max_concurrency": 0},
+            "max_concurrency",
+        ),
+    ],
+)
+def test_rejects_malformed_definitions(raw: Any, message: str) -> None:
+    with pytest.raises(WorkflowValidationError, match=message):
+        Workflow.from_dict(raw)
 
 
-class TestWorkflowEngine:
-    """Test workflow engine."""
-    
-    @pytest.mark.engine
-    def test_create_workflow(self, mock_workflow_engine):
-        """Test creating workflow."""
-        result = mock_workflow_engine.create_workflow()
-        assert result == "workflow-1"
-    
-    @pytest.mark.engine
-    def test_execute_workflow(self, mock_workflow_engine):
-        """Test executing workflow."""
-        result = mock_workflow_engine.execute_workflow()
-        assert result["result"] == "success"
-    
-    @pytest.mark.engine
-    def test_list_workflows(self, mock_workflow_engine):
-        """Test listing workflows."""
-        workflows = mock_workflow_engine.list_workflows()
-        assert isinstance(workflows, list)
-    
-    @pytest.mark.engine
-    def test_delete_workflow(self, mock_workflow_engine):
-        """Test deleting workflow."""
-        result = mock_workflow_engine.delete_workflow()
-        assert result is True
+def test_rejects_duplicate_unknown_self_and_cyclic_dependencies() -> None:
+    cases = [
+        (
+            {"id": "w", "steps": [{"id": "a", "action": "echo"}, {"id": "a", "action": "echo"}]},
+            "unique",
+        ),
+        ({"id": "w", "steps": [{"id": "a", "action": "echo", "needs": ["missing"]}]}, "unknown"),
+        ({"id": "w", "steps": [{"id": "a", "action": "echo", "needs": ["a"]}]}, "itself"),
+        (
+            {
+                "id": "w",
+                "steps": [
+                    {"id": "a", "action": "echo", "needs": ["b"]},
+                    {"id": "b", "action": "echo", "needs": ["a"]},
+                ],
+            },
+            "cycle",
+        ),
+    ]
+    for raw, message in cases:
+        with pytest.raises(WorkflowValidationError, match=message):
+            Workflow.from_dict(raw)
+
+
+def test_rejects_non_json_params_and_resource_excess() -> None:
+    with pytest.raises(WorkflowValidationError, match="JSON-compatible"):
+        Workflow.from_dict({"id": "w", "steps": [{"id": "a", "action": "echo", "with": {"x": {1}}}]})
+
+    too_many = [{"id": f"s{index}", "action": "echo"} for index in range(MAX_STEPS + 1)]
+    with pytest.raises(WorkflowValidationError, match=str(MAX_STEPS)):
+        Workflow.from_dict({"id": "w", "steps": too_many})
+
+    with pytest.raises(WorkflowValidationError, match=str(MAX_CONCURRENCY)):
+        Workflow.from_dict(
+            {"id": "w", "steps": [{"id": "a", "action": "echo"}], "max_concurrency": MAX_CONCURRENCY + 1}
+        )
+
+
+def test_engine_requires_registered_actions(engine: RoutineEngine, workflow_factory: Any) -> None:
+    with pytest.raises(WorkflowValidationError, match=r"unregistered action.*missing"):
+        engine.validate(workflow_factory(steps=[{"id": "x", "action": "missing"}]))
+
+
+def test_references_require_valid_syntax_and_declared_dependencies() -> None:
+    with pytest.raises(WorkflowValidationError, match="must list referenced"):
+        Workflow.from_dict(
+            {
+                "id": "w",
+                "steps": [
+                    {"id": "source", "action": "echo"},
+                    {
+                        "id": "consumer",
+                        "action": "echo",
+                        "with": {"value": "{{ steps.source.output }}"},
+                    },
+                ],
+            }
+        )
+
+    with pytest.raises(WorkflowValidationError, match="invalid reference syntax"):
+        Workflow.from_dict(
+            {
+                "id": "w",
+                "steps": [{"id": "source", "action": "echo", "with": {"value": "{{ input }}"}}],
+            }
+        )

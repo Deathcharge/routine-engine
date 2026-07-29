@@ -1,93 +1,157 @@
-# routine-engine
+# Samsarix Routine Engine
 
-Task automation and routine execution engine. Handles scheduled tasks, workflow automation, event-driven execution, and task queuing.
+Routine Engine is a small, local-first Python library and CLI for deterministic workflow DAGs. You register trusted Python functions, describe dependencies in JSON or Python, and receive an exact result for every step—without operating a control plane.
 
-## 🎯 Overview
+The focused use case is application-owned routines: import jobs, report generation, release checks, data preparation, and other bounded workflows that should stay inside an existing Python process or CI job.
 
-This repository is part of the [Helix Collective](https://github.com/Deathcharge/helix-platform), a comprehensive ecosystem for building intelligent, multi-agent systems with consciousness frameworks and advanced LLM integration.
+> Maturity: **0.1 release candidate.** The supported core is implemented, behaviorally tested, and ready for release review. It has not been published by this repository update.
 
-## 🚀 Quick Start
+## Why this exists
 
-### Installation
+- Zero runtime dependencies and no service to deploy.
+- Validates IDs, dependencies, cycles, JSON parameters, retries, and concurrency before execution.
+- Supports synchronous and asynchronous actions, bounded parallelism, and bounded retries.
+- Resolves only explicit input and prior-output references—never `eval`, shell snippets, or workflow-supplied imports.
+- Reports `success`, `failed`, `skipped`, or `cancelled` for each step.
+- Optionally keeps workflow definitions and bounded run history in an atomic local JSON store.
 
-\`\`\`bash
+If you need distributed workers, a scheduler UI, event streaming, asset lineage, or a multi-tenant control plane, use a larger orchestrator. Routine Engine deliberately does not pretend to be one.
+
+## Install from this repository
+
+Routine Engine has not been published by this productization pass.
+
+```bash
 git clone https://github.com/Deathcharge/routine-engine.git
 cd routine-engine
-pip install -r requirements.txt
-\`\`\`
+python -m pip install .
+```
 
-### Basic Usage
+Python 3.10 or newer is required.
 
-See the [examples/](examples/) directory for working examples and integration patterns.
+## Five-minute Python journey
 
-## 📚 Documentation
+```python
+from routine_engine import ActionContext, RoutineEngine
 
-- **[Architecture](docs/ARCHITECTURE.md)** - System design and components
-- **[API Reference](docs/API.md)** - Complete API documentation
-- **[Integration Guide](docs/INTEGRATION.md)** - How to integrate with other Helix repos
-- **[Deployment](docs/DEPLOYMENT.md)** - Production deployment guide
-- **[Contributing](CONTRIBUTING.md)** - How to contribute
+engine = RoutineEngine()
 
-## 🔗 Related Repositories
 
-- **[helix-platform](https://github.com/Deathcharge/helix-platform)** - Central hub and integration guide
-- **[helix-unified](https://github.com/Deathcharge/helix-unified)** - Main unified codebase
-- **[helix-core](https://github.com/Deathcharge/helix-core)** - Core utilities and LLM integration
+def normalize(context: ActionContext) -> str:
+    return str(context.params["name"]).strip().title()
 
-See [HELIX_REPOSITORY_INDEX.md](https://github.com/Deathcharge/helix-platform/blob/main/HELIX_REPOSITORY_INDEX.md) for the complete ecosystem map.
 
-## 🧪 Testing
+def greeting(context: ActionContext) -> str:
+    return f"Hello, {context.params['name']}!"
 
-Run tests with pytest:
 
-\`\`\`bash
-pytest tests/ -v --cov=src
-\`\`\`
+engine.register("normalize", normalize)
+engine.register("greeting", greeting)
 
-## 🔄 CI/CD
+workflow = {
+    "id": "welcome",
+    "steps": [
+        {
+            "id": "name",
+            "action": "normalize",
+            "with": {"name": "{{ input.name }}"},
+        },
+        {
+            "id": "message",
+            "action": "greeting",
+            "needs": ["name"],
+            "with": {"name": "{{ steps.name.output }}"},
+        },
+    ],
+}
 
-This repository uses GitHub Actions for:
-- ✅ Automated testing (Python 3.9, 3.10, 3.11)
-- ✅ Code linting (flake8)
-- ✅ Type checking (mypy)
-- ✅ Security scanning (bandit, safety)
-- ✅ Coverage reporting (Codecov)
+result = engine.run(workflow, {"name": "  ada  "})
+assert result.succeeded
+print(result.steps["message"].output)  # Hello, Ada!
+```
 
-See [.github/workflows/ci.yml](.github/workflows/ci.yml) for details.
+Use `await engine.arun(...)` inside asynchronous applications. Calling `run()` from an active event loop fails with an actionable error instead of creating a nested loop.
 
-## 📋 Requirements
+## CLI journey
 
-- Python 3.9+
-- Dependencies listed in requirements.txt
-- Development dependencies in requirements-dev.txt
+The CLI includes three side-effect-free actions: `identity`, `merge`, and `format`.
 
-## 🤝 Contributing
+```bash
+routine-engine demo --name Ada
+routine-engine validate examples/workflow.json
+routine-engine run examples/workflow.json --input '{"name":"Ada"}'
+routine-engine run examples/workflow.json --input @input.json --state .routine-state.json
+```
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
-- Development setup
-- Code style guide
-- Testing requirements
-- Pull request process
+Application actions can be loaded only from an explicit trusted module:
 
-## 📄 License
+```python
+# my_actions.py
+def register(engine):
+    engine.register("send_report", send_report)
+```
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+```bash
+routine-engine run workflow.json --plugin my_actions
+```
 
-## 🆘 Support
+Workflow data cannot choose the module that gets imported.
 
-- **Issues**: Report bugs or request features via [GitHub Issues](https://github.com/Deathcharge/routine-engine/issues)
-- **Discussions**: Ask questions in [GitHub Discussions](https://github.com/Deathcharge/routine-engine/discussions)
-- **Documentation**: See the [docs/](docs/) directory
-- **Ecosystem**: Visit [helix-platform](https://github.com/Deathcharge/helix-platform)
+## Workflow format
 
-## 🎓 Learn More
+```json
+{
+  "id": "welcome",
+  "description": "Prepare a greeting",
+  "max_concurrency": 4,
+  "steps": [
+    {
+      "id": "name",
+      "action": "identity",
+      "with": {"value": "{{ input.name }}"},
+      "retries": 2,
+      "retry_delay_seconds": 0.5
+    },
+    {
+      "id": "result",
+      "action": "merge",
+      "needs": ["name"],
+      "with": {"name": "{{ steps.name.output }}"}
+    }
+  ]
+}
+```
 
-- [Helix Collective Repository Index](https://github.com/Deathcharge/helix-platform/blob/main/HELIX_REPOSITORY_INDEX.md)
-- [Architecture Guide](https://github.com/Deathcharge/helix-platform/blob/main/docs/ARCHITECTURE.md)
-- [Integration Examples](https://github.com/Deathcharge/helix-platform/tree/main/examples)
+References must occupy the complete string. Supported forms are `{{ input.path.to.value }}`, `{{ steps.step_id.output }}`, and `{{ steps.step_id.output.path }}`. Missing references fail the affected step; downstream steps are skipped.
 
----
+Resource limits are part of the public contract: 256 steps, 32 concurrent actions, 10 retries per step, and 60 seconds maximum configured retry delay. Registered actions are trusted application code; Routine Engine does not sandbox them.
 
-**Status**: ✅ Production Ready  
-**Last Updated**: June 17, 2026  
-**Maintainer**: Helix Collective Contributors
+## Development
+
+```bash
+python -m pip install -e ".[dev]"
+ruff check .
+ruff format --check .
+mypy src
+pytest --cov --cov-report=term-missing
+python -m build
+python -m twine check dist/*
+```
+
+See [Getting Started](docs/GETTING_STARTED.md), [API Reference](docs/API_REFERENCE.md), [Productization](docs/PRODUCTIZATION.md), [Security Policy](SECURITY.md), and [Contributing](CONTRIBUTING.md).
+
+## Scope and legacy source
+
+Only `src/routine_engine` is distributed. The top-level `routine_engine/` directory is an archived extraction from the former Helix monorepo and is not a supported or packaged API. It remains temporarily for provenance and migration analysis; see its local notice.
+
+## Support
+
+- Product questions: [contact@samsarix.com](mailto:contact@samsarix.com)
+- Support and responsible disclosure: [support@samsarix.com](mailto:support@samsarix.com)
+- Defects: [GitHub Issues](https://github.com/Deathcharge/routine-engine/issues)
+
+## License
+
+The repository is licensed under the Business Source License 1.1 with Samsarix LLC as licensor and Samsarix Routine Engine as the licensed work. The existing production-use threshold, June 16, 2027 change date, and Apache License 2.0 change license remain unchanged. See [LICENSE](LICENSE) for the controlling terms; commercial licensing questions go to [contact@samsarix.com](mailto:contact@samsarix.com).
+
+Copyright © 2026 Samsarix LLC.
