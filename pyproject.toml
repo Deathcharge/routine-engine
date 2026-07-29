@@ -1,32 +1,83 @@
 [build-system]
-requires = ["setuptools>=45", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "routine-engine"
+name = "samsarix-routine-engine"
 version = "0.1.0"
-description = "Workflow orchestration and automation engine"
+description = "A small, local-first engine for deterministic Python workflows"
 readme = "README.md"
-requires-python = ">=3.9"
-license = {text = "MIT"}
+requires-python = ">=3.10"
+license = "BUSL-1.1"
+license-files = ["LICENSE"]
 authors = [
-    {name = "Helix Collective", email = "collective@helix.ai"}
+    { name = "Samsarix LLC", email = "contact@samsarix.com" },
 ]
+maintainers = [
+    { name = "Samsarix LLC", email = "support@samsarix.com" },
+]
+keywords = ["automation", "dag", "orchestration", "workflow"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
 ]
-dependencies = [
-    "helix-hub-shared>=0.1.0",
-    "pydantic>=2.0",
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2,<2",
+    "mypy>=1.10,<2",
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.24,<2",
+    "pytest-cov>=5,<8",
+    "ruff>=0.9,<1",
+    "twine>=5,<7",
 ]
+
+[project.scripts]
+routine-engine = "routine_engine.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/Deathcharge/routine-engine"
 Repository = "https://github.com/Deathcharge/routine-engine.git"
 Issues = "https://github.com/Deathcharge/routine-engine/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+extend-exclude = ["routine_engine"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src"]
+exclude = "^routine_engine/"

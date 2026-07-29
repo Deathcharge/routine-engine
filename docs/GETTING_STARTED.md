@@ -1,94 +1,79 @@
-# Getting Started with Routine Engine
+# Getting Started
 
-## Installation
+## Requirements
+
+- Python 3.10 or newer
+- A virtual environment is recommended
+
+Install the repository checkout:
 
 ```bash
-pip install routine-engine
+python -m venv .venv
+.venv/Scripts/python -m pip install -e ".[dev]"  # Windows
 ```
 
-## Quick Start
+On macOS or Linux, use `.venv/bin/python` instead.
 
-```python
-from routine_engine import WorkflowEngine, Scheduler
+## Run the built-in journey
 
-# Create engine
-engine = WorkflowEngine()
-
-# Define workflow
-workflow = {
-    "name": "DailyAnalysis",
-    "steps": [
-        {"id": "step-1", "action": "analyze_data"},
-        {"id": "step-2", "action": "generate_report"}
-    ]
-}
-
-# Create and execute
-workflow_id = engine.create_workflow(workflow)
-result = engine.execute_workflow(workflow_id)
+```bash
+routine-engine demo --name Ada
 ```
 
-## Scheduling Workflows
+The command prints a complete JSON run result. The final `greet` step contains `Hello, Ada!`.
 
-```python
-scheduler = Scheduler()
+## Run a JSON workflow
 
-# Schedule daily at midnight
-schedule_id = scheduler.schedule_workflow(
-    workflow_id,
-    cron="0 0 * * *",
-    timezone="UTC"
-)
-```
+Save this as `workflow.json`:
 
-## Common Patterns
-
-### 1. Sequential Workflow
-```python
-workflow = {
-    "name": "Sequential",
-    "steps": [
-        {"id": "1", "action": "fetch_data"},
-        {"id": "2", "action": "process"},
-        {"id": "3", "action": "save"}
-    ]
+```json
+{
+  "id": "copy-name",
+  "steps": [
+    {
+      "id": "name",
+      "action": "identity",
+      "with": {"value": "{{ input.name }}"}
+    },
+    {
+      "id": "result",
+      "action": "merge",
+      "needs": ["name"],
+      "with": {"normalized_name": "{{ steps.name.output }}"}
+    }
+  ]
 }
 ```
 
-### 2. Parallel Execution
-```python
-workflow = {
-    "name": "Parallel",
-    "parallel": [
-        {"id": "1", "action": "task_a"},
-        {"id": "2", "action": "task_b"}
-    ]
-}
+Then validate and run it:
+
+```bash
+routine-engine validate workflow.json
+routine-engine run workflow.json --input '{"name":"Ada"}' --state .routine-state.json
 ```
 
-### 3. Conditional Workflow
-```python
-workflow = {
-    "name": "Conditional",
-    "steps": [
-        {"id": "1", "action": "check_condition"},
-        {"id": "2", "action": "if_true", "condition": "result.success"},
-        {"id": "3", "action": "if_false", "condition": "!result.success"}
-    ]
-}
-```
+`--state` is optional. It stores definitions and at most 100 recent results using same-directory atomic replacement. One store instance is thread-safe; coordinate separately if multiple processes write the same file.
 
-## Error Handling
+## Register application actions
+
+An action accepts one `ActionContext`. It may be synchronous or asynchronous.
 
 ```python
-try:
-    result = engine.execute_workflow(workflow_id)
-except WorkflowError as e:
-    print(f"Workflow failed: {e}")
+from routine_engine import ActionContext, RoutineEngine
+
+
+async def fetch_customer(context: ActionContext) -> dict[str, str]:
+    customer_id = str(context.params["customer_id"])
+    # Call your application service here.
+    return {"id": customer_id, "status": "active"}
+
+
+engine = RoutineEngine()
+engine.register("fetch_customer", fetch_customer)
 ```
 
-## Next Steps
+Registration is the trust boundary. Do not register functions that accept unreviewed commands, code, filesystem paths, SQL, or URLs without enforcing the policy your application needs.
 
-- Read the [API Reference](API_REFERENCE.md)
-- Check out [examples](../examples/)
-- Review [architecture](ARCHITECTURE.md)
+## Scheduling
+
+Routine Engine executes one run; it does not run a scheduler. Invoke the CLI or your Python entrypoint from cron, Windows Task Scheduler, GitHub Actions, or the scheduling system you already operate.

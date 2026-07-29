@@ -39,10 +39,8 @@ async def _require_builder(
 
             _builder_guard = _g
         except ImportError:
-            logger.warning("require_builder unavailable — flows fall back to auth-only")
-            _builder_guard = None
-    if _builder_guard is None:
-        return await get_current_user(request=request, credentials=credentials)
+            logger.error("require_builder unavailable — protected flow execution is disabled")
+            raise HTTPException(status_code=503, detail="Flow authorization is unavailable") from None
     return await _builder_guard(request=request, credentials=credentials)  # type: ignore[operator]
 
 

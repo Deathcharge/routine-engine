@@ -1,0 +1,26 @@
+{
+  "id": "cli-example",
+  "description": "Prepare a greeting with built-in actions",
+  "steps": [
+    {
+      "id": "name",
+      "action": "identity",
+      "with": {
+        "value": "{{ input.name }}"
+      }
+    },
+    {
+      "id": "greeting",
+      "action": "format",
+      "needs": [
+        "name"
+      ],
+      "with": {
+        "template": "Hello, {name}!",
+        "values": {
+          "name": "{{ steps.name.output }}"
+        }
+      }
+    }
+  ]
+}

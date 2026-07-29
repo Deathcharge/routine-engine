@@ -755,6 +755,13 @@ class APITool(Tool):
 
         start = time.time()
 
+        return ToolResult(
+            success=False,
+            output=None,
+            error="Legacy network actions are disabled; use an explicitly registered Routine Engine action",
+        )
+
+        # Retained temporarily as archived source; unreachable by design.
         try:
             full_url = f"{self.base_url}{url}" if not url.startswith("http") else url
 
@@ -764,7 +771,13 @@ class APITool(Tool):
             all_headers = {**self.default_headers, **(headers or {})}
 
             async with aiohttp.ClientSession() as session:
-                async with session.request(method=method, url=full_url, json=body, headers=all_headers) as response:
+                async with session.request(
+                    method=method,
+                    url=full_url,
+                    json=body,
+                    headers=all_headers,
+                    allow_redirects=False,
+                ) as response:
                     try:
                         response_data = await response.json()
                     except Exception:
@@ -839,8 +852,13 @@ class FileSystemTool(Tool):
         start = time.time()
 
         # Prevent path traversal
-        full_path = os.path.normpath(os.path.join(self.base_path, path))
-        if not full_path.startswith(os.path.normpath(self.base_path)):
+        base_path = os.path.realpath(self.base_path)
+        full_path = os.path.realpath(os.path.join(base_path, path))
+        try:
+            contained = os.path.commonpath((base_path, full_path)) == base_path
+        except ValueError:
+            contained = False
+        if not contained:
             return ToolResult(success=False, output=None, error="Path traversal not allowed")
 
         try:
