@@ -4,7 +4,7 @@ Routine Engine is a small, local-first Python library and CLI for deterministic 
 
 The focused use case is application-owned routines: import jobs, report generation, release checks, data preparation, and other bounded workflows that should stay inside an existing Python process or CI job.
 
-> Maturity: **0.1 release candidate.** The supported core is implemented, behaviorally tested, and ready for release review. It has not been published by this repository update.
+> Maturity: **0.2 release candidate.** The supported core, bounded execution contract, and local recovery path are implemented and under release verification. It has not been published by this repository update.
 
 ## Why this exists
 
@@ -78,6 +78,7 @@ The CLI includes three side-effect-free actions: `identity`, `merge`, and `forma
 
 ```bash
 routine-engine demo --name Ada
+routine-engine schema
 routine-engine validate examples/workflow.json
 routine-engine plan examples/workflow.json
 routine-engine run examples/workflow.json --input '{"name":"Ada"}'
@@ -145,9 +146,10 @@ mypy src
 pytest --cov --cov-report=term-missing
 python -m build
 python -m twine check dist/*
+python benchmarks/benchmark_engine.py --steps 256 --runs 20
 ```
 
-See [Getting Started](docs/GETTING_STARTED.md), [API Reference](docs/API_REFERENCE.md), [Productization](docs/PRODUCTIZATION.md), [Security Policy](SECURITY.md), and [Contributing](CONTRIBUTING.md).
+See [Getting Started](docs/GETTING_STARTED.md), [API Reference](docs/API_REFERENCE.md), [Use Cases](docs/USE_CASES.md), [Competitive Position](docs/COMPETITIVE_ANALYSIS.md), [Security Policy](SECURITY.md), and [Contributing](CONTRIBUTING.md).
 
 ## Scope and legacy source
 

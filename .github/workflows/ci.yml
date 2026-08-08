@@ -32,6 +32,8 @@ jobs:
           /tmp/routine-wheel/bin/python -m pip install dist/*.whl
           /tmp/routine-wheel/bin/python -c "from routine_engine import RoutineEngine; print(RoutineEngine)"
           /tmp/routine-wheel/bin/routine-engine demo --name CI
+          /tmp/routine-wheel/bin/routine-engine schema | /tmp/routine-wheel/bin/python -m json.tool >/dev/null
+          PYTHONPATH=. /tmp/routine-wheel/bin/routine-engine run examples/release-readiness.json --plugin examples.release_actions
 
   test:
     runs-on: ${{ matrix.os }}

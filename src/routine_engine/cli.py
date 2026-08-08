@@ -6,6 +6,7 @@ import argparse
 import importlib
 import json
 import sys
+from importlib import resources
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Sequence
@@ -21,7 +22,7 @@ def _version() -> str:
     try:
         return version("samsarix-routine-engine")
     except PackageNotFoundError:
-        return "0.1.0"
+        return "0.2.0"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -59,6 +60,8 @@ def _parser() -> argparse.ArgumentParser:
     show = subparsers.add_parser("show", help="show one persisted run")
     show.add_argument("run_id")
     show.add_argument("--state", type=Path, required=True)
+
+    subparsers.add_parser("schema", help="print the bundled workflow v1 JSON Schema")
 
     demo = subparsers.add_parser("demo", help="run the built-in greeting workflow")
     demo.add_argument("--name", default="world")
@@ -128,6 +131,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "demo":
             result = _make_engine([]).run(_demo(), {"name": args.name})
             print(json.dumps(result.to_dict(), indent=2))
+            return 0
+
+        if args.command == "schema":
+            schema = resources.files("routine_engine").joinpath("schemas/workflow-v1.schema.json")
+            print(schema.read_text(encoding="utf-8"))
             return 0
 
         if args.command == "history":

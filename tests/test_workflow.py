@@ -34,6 +34,10 @@ def test_schema_version_and_json_shape_are_pinned() -> None:
     assert Workflow.from_dict(raw).schema_version == 1
     with pytest.raises(WorkflowValidationError, match="schema_version"):
         Workflow.from_dict({"schema_version": 2, **raw})
+    with pytest.raises(WorkflowValidationError, match="unknown field"):
+        Workflow.from_dict({**raw, "surprise": True})
+    with pytest.raises(WorkflowValidationError, match="unknown field"):
+        Workflow.from_dict({"id": "step-field", "steps": [{"id": "one", "action": "echo", "extra": 1}]})
     with pytest.raises(WorkflowValidationError, match="string object keys"):
         Workflow.from_dict({"id": "keys", "steps": [{"id": "one", "action": "echo", "with": {1: 2}}]})
 

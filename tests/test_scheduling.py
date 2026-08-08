@@ -116,6 +116,41 @@ def test_cli_validate_run_demo_and_version(tmp_path: Path, capsys: pytest.Captur
     assert raised.value.code == 0
 
 
+def test_bundled_schema_and_release_consumer(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    repository = Path(__file__).parents[1]
+    source_schema = json.loads(
+        (repository / "schemas" / "workflow-v1.schema.json").read_text(encoding="utf-8")
+    )
+    bundled_schema = json.loads(
+        (repository / "src" / "routine_engine" / "schemas" / "workflow-v1.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert bundled_schema == source_schema
+    assert main(["schema"]) == 0
+    assert json.loads(capsys.readouterr().out)["properties"]["schema_version"]["const"] == 1
+
+    workflow = repository / "examples" / "release-readiness.json"
+    state = tmp_path / "release-state.json"
+    assert main(["validate", str(workflow), "--plugin", "examples.release_actions"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "run",
+                str(workflow),
+                "--plugin",
+                "examples.release_actions",
+                "--state",
+                str(state),
+            ]
+        )
+        == 0
+    )
+    evidence = json.loads(capsys.readouterr().out)["steps"]["evidence"]["output"]
+    assert len(evidence["readme"]["sha256"]) == 64
+
+
 def test_cli_reports_bad_input_and_bad_plugin(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     workflow_path = tmp_path / "workflow.json"
     workflow_path.write_text('{"id":"w","steps":[{"id":"x","action":"identity"}]}', encoding="utf-8")

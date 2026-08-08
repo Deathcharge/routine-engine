@@ -107,6 +107,18 @@ class Step:
     def from_dict(cls, value: Mapping[str, Any], index: int) -> Step:
         if not isinstance(value, Mapping):
             raise WorkflowValidationError(f"steps[{index}] must be an object")
+        unknown = set(value) - {
+            "id",
+            "action",
+            "needs",
+            "with",
+            "retries",
+            "retry_delay_seconds",
+        }
+        if unknown:
+            raise WorkflowValidationError(
+                f"steps[{index}] contains unknown field(s): {', '.join(sorted(unknown))}"
+            )
 
         step_id = _require_identifier(value.get("id"), f"steps[{index}].id")
         action = _require_identifier(value.get("action"), f"steps[{index}].action")
@@ -177,6 +189,9 @@ class Workflow:
                 f"schema_version must be the integer {WORKFLOW_SCHEMA_VERSION}"
             )
         value = detached
+        unknown = set(value) - {"schema_version", "id", "description", "max_concurrency", "steps"}
+        if unknown:
+            raise WorkflowValidationError(f"workflow contains unknown field(s): {', '.join(sorted(unknown))}")
         workflow_id = _require_identifier(value.get("id"), "id")
         description = value.get("description", "")
         if not isinstance(description, str) or len(description) > 1000:

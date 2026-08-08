@@ -41,7 +41,7 @@ Primary references:
 - [PyPA command-line tools guide](https://packaging.python.org/en/latest/guides/creating-command-line-tools/)
 - [Python 3.9.25 release and end-of-life notice](https://www.python.org/downloads/release/python-3925/)
 
-## Supported 0.1 contract
+## Supported 0.2 contract
 
 - Python 3.10–3.13
 - `src/routine_engine` only
