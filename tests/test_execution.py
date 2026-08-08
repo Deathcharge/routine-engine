@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 
@@ -12,6 +13,7 @@ from routine_engine import (
     StepStatus,
     WorkflowValidationError,
 )
+from routine_engine.models import MAX_ERROR_LENGTH
 
 
 def test_primary_journey_resolves_input_and_prior_outputs(engine: RoutineEngine) -> None:
@@ -200,6 +202,24 @@ def test_registration_guards_names_duplicates_and_callables() -> None:
     assert engine.actions == ("valid",)
 
 
+def test_plan_is_stable_and_definition_ordered() -> None:
+    engine = RoutineEngine()
+    engine.register("work", lambda _: None)
+    plan = engine.plan(
+        {
+            "id": "planned",
+            "max_concurrency": 2,
+            "steps": [
+                {"id": "b", "action": "work"},
+                {"id": "a", "action": "work"},
+                {"id": "done", "action": "work", "needs": ["a", "b"]},
+            ],
+        }
+    )
+    assert [[step.id for step in layer] for layer in plan.layers] == [["b", "a"], ["done"]]
+    assert plan.to_dict()["schema_version"] == 1
+
+
 @pytest.mark.asyncio
 async def test_sync_entrypoint_rejects_running_event_loop(engine: RoutineEngine) -> None:
     with pytest.raises(RuntimeError, match="await arun"):
@@ -221,3 +241,44 @@ async def test_cancellation_propagates_and_cancels_actions() -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+def test_outputs_are_portable_and_errors_are_bounded() -> None:
+    engine = RoutineEngine()
+    engine.register("bad-output", lambda _: {1, 2})
+    output_result = engine.run({"id": "portable", "steps": [{"id": "one", "action": "bad-output"}]})
+    assert output_result.status is RunStatus.FAILED
+    assert "JSON-compatible" in (output_result.steps["one"].error or "")
+
+    engine.register("loud", lambda _: (_ for _ in ()).throw(RuntimeError("x\n" * 5000)))
+    error_result = engine.run({"id": "errors", "steps": [{"id": "one", "action": "loud"}]})
+    error = error_result.steps["one"].error or ""
+    assert len(error) == MAX_ERROR_LENGTH
+    assert "\n" not in error
+    assert error.endswith("... [truncated]")
+
+
+@pytest.mark.asyncio
+async def test_synchronous_actions_do_not_block_the_event_loop() -> None:
+    barrier = threading.Barrier(2, timeout=2)
+    engine = RoutineEngine()
+
+    def wait_together(_: ActionContext) -> str:
+        barrier.wait()
+        return "done"
+
+    engine.register("wait", wait_together)
+    result = await asyncio.wait_for(
+        engine.arun(
+            {
+                "id": "threads",
+                "max_concurrency": 2,
+                "steps": [
+                    {"id": "one", "action": "wait"},
+                    {"id": "two", "action": "wait"},
+                ],
+            }
+        ),
+        timeout=3,
+    )
+    assert result.status is RunStatus.SUCCESS

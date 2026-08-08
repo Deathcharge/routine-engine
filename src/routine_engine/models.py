@@ -16,6 +16,12 @@ MAX_STEPS = 256
 MAX_RETRIES = 10
 MAX_RETRY_DELAY_SECONDS = 60.0
 MAX_CONCURRENCY = 32
+WORKFLOW_SCHEMA_VERSION = 1
+MAX_WORKFLOW_BYTES = 1_048_576
+MAX_INPUT_BYTES = 1_048_576
+MAX_STEP_OUTPUT_BYTES = 4_194_304
+MAX_JSON_DEPTH = 32
+MAX_ERROR_LENGTH = 4096
 _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
 _INPUT_REFERENCE = re.compile(
     r"^\{\{\s*input\.[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9_-]*)*\s*\}\}$"
@@ -36,11 +42,37 @@ def _require_identifier(value: Any, field_name: str) -> str:
     return value
 
 
-def _require_json(value: Any, field_name: str) -> None:
+def validate_json_payload(value: Any, field_name: str, max_bytes: int) -> Any:
+    """Validate, bound, and detach portable JSON data."""
+
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    seen: set[int] = set()
+    while stack:
+        current, depth = stack.pop()
+        if isinstance(current, Mapping):
+            if depth > MAX_JSON_DEPTH:
+                raise WorkflowValidationError(f"{field_name} exceeds the maximum JSON depth of {MAX_JSON_DEPTH}")
+            if id(current) in seen:
+                continue
+            seen.add(id(current))
+            if not all(isinstance(key, str) for key in current):
+                raise WorkflowValidationError(f"{field_name} must use string object keys")
+            stack.extend((item, depth + 1) for item in current.values())
+        elif isinstance(current, (list, tuple)):
+            if depth > MAX_JSON_DEPTH:
+                raise WorkflowValidationError(f"{field_name} exceeds the maximum JSON depth of {MAX_JSON_DEPTH}")
+            if id(current) in seen:
+                continue
+            seen.add(id(current))
+            stack.extend((item, depth + 1) for item in current)
     try:
-        json.dumps(value, allow_nan=False)
-    except (TypeError, ValueError, OverflowError) as exc:
+        payload = json.dumps(value, allow_nan=False, separators=(",", ":"), sort_keys=True)
+    except (TypeError, ValueError, OverflowError, RecursionError) as exc:
         raise WorkflowValidationError(f"{field_name} must be finite, JSON-compatible data") from exc
+    size = len(payload.encode("utf-8"))
+    if size > max_bytes:
+        raise WorkflowValidationError(f"{field_name} exceeds the maximum size of {max_bytes} bytes")
+    return json.loads(payload)
 
 
 class StepStatus(str, Enum):
@@ -87,7 +119,7 @@ class Step:
         params = value.get("with", {})
         if not isinstance(params, Mapping):
             raise WorkflowValidationError(f"steps[{index}].with must be an object")
-        _require_json(params, f"steps[{index}].with")
+        detached_params = validate_json_payload(params, f"steps[{index}].with", MAX_WORKFLOW_BYTES)
 
         retries = value.get("retries", 0)
         if isinstance(retries, bool) or not isinstance(retries, int) or not 0 <= retries <= MAX_RETRIES:
@@ -102,7 +134,6 @@ class Step:
                 f"steps[{index}].retry_delay_seconds must be from 0 to {MAX_RETRY_DELAY_SECONDS:g}"
             )
 
-        detached_params = json.loads(json.dumps(params, allow_nan=False))
         return cls(
             id=step_id,
             action=action,
@@ -131,6 +162,7 @@ class Workflow:
 
     id: str
     steps: tuple[Step, ...]
+    schema_version: int = WORKFLOW_SCHEMA_VERSION
     description: str = ""
     max_concurrency: int = 4
 
@@ -138,6 +170,13 @@ class Workflow:
     def from_dict(cls, value: Mapping[str, Any]) -> Workflow:
         if not isinstance(value, Mapping):
             raise WorkflowValidationError("workflow must be a JSON object")
+        detached = validate_json_payload(dict(value), "workflow", MAX_WORKFLOW_BYTES)
+        schema_version = detached.get("schema_version", WORKFLOW_SCHEMA_VERSION)
+        if isinstance(schema_version, bool) or schema_version != WORKFLOW_SCHEMA_VERSION:
+            raise WorkflowValidationError(
+                f"schema_version must be the integer {WORKFLOW_SCHEMA_VERSION}"
+            )
+        value = detached
         workflow_id = _require_identifier(value.get("id"), "id")
         description = value.get("description", "")
         if not isinstance(description, str) or len(description) > 1000:
@@ -180,12 +219,17 @@ class Workflow:
         return cls(
             id=workflow_id,
             steps=steps,
+            schema_version=schema_version,
             description=description,
             max_concurrency=max_concurrency,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        value: dict[str, Any] = {"id": self.id, "steps": [step.to_dict() for step in self.steps]}
+        value: dict[str, Any] = {
+            "schema_version": self.schema_version,
+            "id": self.id,
+            "steps": [step.to_dict() for step in self.steps],
+        }
         if self.description:
             value["description"] = self.description
         if self.max_concurrency != 4:
@@ -241,6 +285,36 @@ class ActionContext:
     inputs: Mapping[str, Any]
     params: Mapping[str, Any]
     outputs: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class PlanStep:
+    """One registered action in an execution plan."""
+
+    id: str
+    action: str
+    needs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"id": self.id, "action": self.action, "needs": list(self.needs)}
+
+
+@dataclass(frozen=True)
+class ExecutionPlan:
+    """A deterministic, definition-ordered view of executable DAG layers."""
+
+    workflow_id: str
+    schema_version: int
+    max_concurrency: int
+    layers: tuple[tuple[PlanStep, ...], ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "workflow_id": self.workflow_id,
+            "schema_version": self.schema_version,
+            "max_concurrency": self.max_concurrency,
+            "layers": [[step.to_dict() for step in layer] for layer in self.layers],
+        }
 
 
 @dataclass(frozen=True)

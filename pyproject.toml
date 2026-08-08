@@ -61,7 +61,7 @@ pythonpath = ["src"]
 
 [tool.coverage.run]
 branch = true
-source = ["src"]
+source = ["src/routine_engine"]
 
 [tool.coverage.report]
 fail_under = 90

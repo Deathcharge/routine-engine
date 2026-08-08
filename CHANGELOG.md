@@ -14,11 +14,18 @@ All notable changes will be documented here. The format follows [Keep a Changelo
 
 ### Added
 
+- Deterministic execution plans through `RoutineEngine.plan()` and the `routine-engine plan` command.
+- An explicit workflow `schema_version` contract, currently pinned to version 1.
 - Validated acyclic workflow and step models with explicit resource limits.
 - Trusted sync/async action registration, bounded concurrency/retries, references, and exact terminal results.
 - Atomic local JSON workflow/run persistence with bounded history.
 - `routine-engine` CLI for validation, execution, explicit plugins, and a built-in demo.
 - Behavioral unit/integration tests, coverage gate, linting, typing, package checks, wheel smoke test, and CI matrix.
 - Productization decision record, security policy, API guide, and runnable examples.
+
+### Security
+
+- Bounded workflow definitions, run inputs, step outputs, JSON nesting, and persisted error text.
+- Synchronous actions now run in bounded worker threads so they cannot serialize or block the async scheduler.
 
 [Unreleased]: https://github.com/Deathcharge/routine-engine/compare/v0.1.0...HEAD

@@ -36,6 +36,10 @@ def _parser() -> argparse.ArgumentParser:
     validate.add_argument("workflow", type=Path)
     validate.add_argument("--plugin", action="append", default=[], metavar="MODULE")
 
+    plan = subparsers.add_parser("plan", help="print deterministic execution layers")
+    plan.add_argument("workflow", type=Path)
+    plan.add_argument("--plugin", action="append", default=[], metavar="MODULE")
+
     run = subparsers.add_parser("run", help="run a workflow JSON file")
     run.add_argument("workflow", type=Path)
     run.add_argument("--input", default="{}", metavar="JSON_OR_@FILE")
@@ -116,6 +120,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "validate":
             definition = _make_engine(args.plugin).validate(workflow)
             print(f"valid: {definition.id} ({len(definition.steps)} steps)")
+            return 0
+
+        if args.command == "plan":
+            plan = _make_engine(args.plugin).plan(workflow)
+            print(json.dumps(plan.to_dict(), indent=2))
             return 0
 
         result = _make_engine(args.plugin, args.state).run(workflow, _load_input(args.input))

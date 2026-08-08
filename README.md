@@ -79,6 +79,7 @@ The CLI includes three side-effect-free actions: `identity`, `merge`, and `forma
 ```bash
 routine-engine demo --name Ada
 routine-engine validate examples/workflow.json
+routine-engine plan examples/workflow.json
 routine-engine run examples/workflow.json --input '{"name":"Ada"}'
 routine-engine run examples/workflow.json --input @input.json --state .routine-state.json
 ```
@@ -101,6 +102,7 @@ Workflow data cannot choose the module that gets imported.
 
 ```json
 {
+  "schema_version": 1,
   "id": "welcome",
   "description": "Prepare a greeting",
   "max_concurrency": 4,
@@ -124,7 +126,9 @@ Workflow data cannot choose the module that gets imported.
 
 References must occupy the complete string. Supported forms are `{{ input.path.to.value }}`, `{{ steps.step_id.output }}`, and `{{ steps.step_id.output.path }}`. Missing references fail the affected step; downstream steps are skipped.
 
-Resource limits are part of the public contract: 256 steps, 32 concurrent actions, 10 retries per step, and 60 seconds maximum configured retry delay. Registered actions are trusted application code; Routine Engine does not sandbox them.
+Resource limits are part of the public contract: 256 steps, 32 concurrent actions, 10 retries per step, 60 seconds maximum configured retry delay, 1 MiB definitions and inputs, 4 MiB step outputs, 32 JSON nesting levels, and 4,096-character errors. Data crossing a workflow boundary must be finite, portable JSON with string object keys.
+
+Synchronous actions run in a bounded worker-thread pool so one blocking action does not freeze the asynchronous scheduler. Cancellation cannot forcibly terminate Python code already executing in a thread. Registered actions remain trusted application code; Routine Engine does not sandbox them.
 
 ## Development
 

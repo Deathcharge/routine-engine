@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from routine_engine import RoutineEngine, Workflow, WorkflowValidationError
-from routine_engine.models import MAX_CONCURRENCY, MAX_STEPS
+from routine_engine.models import MAX_CONCURRENCY, MAX_JSON_DEPTH, MAX_STEPS
 
 
 def test_workflow_round_trip_preserves_public_shape(workflow_factory: Any) -> None:
@@ -26,7 +26,24 @@ def test_workflow_round_trip_preserves_public_shape(workflow_factory: Any) -> No
 
     definition = Workflow.from_dict(raw)
 
-    assert definition.to_dict() == raw
+    assert definition.to_dict() == {"schema_version": 1, **raw}
+
+
+def test_schema_version_and_json_shape_are_pinned() -> None:
+    raw = {"id": "versioned", "steps": [{"id": "one", "action": "echo"}]}
+    assert Workflow.from_dict(raw).schema_version == 1
+    with pytest.raises(WorkflowValidationError, match="schema_version"):
+        Workflow.from_dict({"schema_version": 2, **raw})
+    with pytest.raises(WorkflowValidationError, match="string object keys"):
+        Workflow.from_dict({"id": "keys", "steps": [{"id": "one", "action": "echo", "with": {1: 2}}]})
+
+    nested: Any = "leaf"
+    for _ in range(MAX_JSON_DEPTH + 1):
+        nested = [nested]
+    with pytest.raises(WorkflowValidationError, match="maximum JSON depth"):
+        Workflow.from_dict(
+            {"id": "deep", "steps": [{"id": "one", "action": "echo", "with": {"value": nested}}]}
+        )
 
 
 @pytest.mark.parametrize(

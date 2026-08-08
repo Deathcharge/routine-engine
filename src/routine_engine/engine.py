@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import re
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
@@ -14,6 +13,11 @@ from typing import Any
 from .errors import ActionRegistrationError, WorkflowValidationError
 from .models import (
     ActionContext,
+    ExecutionPlan,
+    MAX_ERROR_LENGTH,
+    MAX_INPUT_BYTES,
+    MAX_STEP_OUTPUT_BYTES,
+    PlanStep,
     RunResult,
     RunStatus,
     Step,
@@ -21,6 +25,7 @@ from .models import (
     StepStatus,
     Workflow,
     utc_now,
+    validate_json_payload,
 )
 from .storage import JsonStore
 
@@ -59,6 +64,27 @@ class RoutineEngine:
             raise WorkflowValidationError(f"unregistered action(s): {', '.join(missing)}")
         return definition
 
+    def plan(self, workflow: Workflow | Mapping[str, Any]) -> ExecutionPlan:
+        """Return stable topological layers without executing any actions."""
+
+        definition = self.validate(workflow)
+        complete: set[str] = set()
+        layers: list[tuple[PlanStep, ...]] = []
+        while len(complete) < len(definition.steps):
+            ready = tuple(
+                PlanStep(step.id, step.action, step.needs)
+                for step in definition.steps
+                if step.id not in complete and set(step.needs) <= complete
+            )
+            layers.append(ready)
+            complete.update(step.id for step in ready)
+        return ExecutionPlan(
+            workflow_id=definition.id,
+            schema_version=definition.schema_version,
+            max_concurrency=definition.max_concurrency,
+            layers=tuple(layers),
+        )
+
     def run(self, workflow: Workflow | Mapping[str, Any], inputs: Mapping[str, Any] | None = None) -> RunResult:
         """Run a workflow from synchronous code."""
 
@@ -76,10 +102,7 @@ class RoutineEngine:
         """Run a workflow and return exact per-step terminal states."""
 
         definition = self.validate(workflow)
-        try:
-            run_inputs = json.loads(json.dumps(dict(inputs or {}), allow_nan=False))
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise WorkflowValidationError("run inputs must be finite, JSON-compatible data") from exc
+        run_inputs = validate_json_payload(dict(inputs or {}), "run inputs", MAX_INPUT_BYTES)
         run_id = uuid.uuid4().hex
         started_at = utc_now()
         pending = {step.id: step for step in definition.steps}
@@ -209,8 +232,12 @@ class RoutineEngine:
                 outputs=MappingProxyType(output_values),
             )
             try:
-                value = action(context)
+                if inspect.iscoroutinefunction(action):
+                    value = await action(context)
+                else:
+                    value = await asyncio.to_thread(action, context)
                 output = await value if inspect.isawaitable(value) else value
+                output = validate_json_payload(output, f"step '{step.id}' output", MAX_STEP_OUTPUT_BYTES)
                 return StepResult(
                     step_id=step.id,
                     status=StepStatus.SUCCESS,
@@ -220,7 +247,7 @@ class RoutineEngine:
                     output=output,
                 )
             except Exception as exc:  # actions define their own expected exception types
-                last_error = f"{type(exc).__name__}: {exc}"
+                last_error = _format_error(exc)
                 if attempt <= step.retries and step.retry_delay_seconds:
                     await asyncio.sleep(step.retry_delay_seconds)
 
@@ -236,6 +263,14 @@ class RoutineEngine:
 
 def _ordered_results(workflow: Workflow, results: Mapping[str, StepResult]) -> dict[str, StepResult]:
     return {step.id: results[step.id] for step in workflow.steps}
+
+
+def _format_error(exc: Exception) -> str:
+    message = f"{type(exc).__name__}: {exc}".replace("\r", "\\r").replace("\n", "\\n")
+    if len(message) <= MAX_ERROR_LENGTH:
+        return message
+    suffix = "... [truncated]"
+    return message[: MAX_ERROR_LENGTH - len(suffix)] + suffix
 
 
 def _resolve_value(value: Any, inputs: Mapping[str, Any], outputs: Mapping[str, Any]) -> Any:

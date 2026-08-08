@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from routine_engine import ActionContext, JsonStore, RoutineEngine, StorageError
+from routine_engine import ActionContext, JsonStore, RoutineEngine, RunStatus, StorageError
 from routine_engine.cli import main
 
 
@@ -20,7 +20,7 @@ def test_json_store_persists_definition_and_bounded_history(tmp_path: Path) -> N
 
     snapshot = JsonStore(path).snapshot()
     assert snapshot["schema_version"] == 1
-    assert snapshot["workflows"]["stored"] == workflow
+    assert snapshot["workflows"]["stored"] == {"schema_version": 1, **workflow}
     assert len(snapshot["runs"]) == 2
     assert all(run["status"] == "success" for run in snapshot["runs"])
 
@@ -38,8 +38,9 @@ def test_json_store_rejects_corrupt_schema_and_non_json_output(tmp_path: Path) -
 
     engine = RoutineEngine(store=JsonStore(tmp_path / "state.json"))
     engine.register("set", lambda _: {1})
-    with pytest.raises(StorageError, match="JSON-compatible"):
-        engine.run({"id": "bad", "steps": [{"id": "one", "action": "set"}]})
+    result = engine.run({"id": "bad", "steps": [{"id": "one", "action": "set"}]})
+    assert result.status is RunStatus.FAILED
+    assert "JSON-compatible" in (result.steps["one"].error or "")
 
 
 def test_store_constructor_bounds_history(tmp_path: Path) -> None:
@@ -68,6 +69,10 @@ def test_cli_validate_run_demo_and_version(tmp_path: Path, capsys: pytest.Captur
     )
     assert main(["validate", str(workflow_path)]) == 0
     assert "valid: cli (2 steps)" in capsys.readouterr().out
+
+    assert main(["plan", str(workflow_path)]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert [[step["id"] for step in layer] for layer in plan["layers"]] == [["name"], ["out"]]
 
     state = tmp_path / "state.json"
     assert main(["run", str(workflow_path), "--input", '{"name":"Ada"}', "--state", str(state)]) == 0
