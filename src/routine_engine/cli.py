@@ -6,6 +6,7 @@ import argparse
 import importlib
 import json
 import sys
+from importlib import resources
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Sequence
@@ -21,7 +22,7 @@ def _version() -> str:
     try:
         return version("samsarix-routine-engine")
     except PackageNotFoundError:
-        return "0.1.0"
+        return "0.2.0"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -36,11 +37,31 @@ def _parser() -> argparse.ArgumentParser:
     validate.add_argument("workflow", type=Path)
     validate.add_argument("--plugin", action="append", default=[], metavar="MODULE")
 
+    plan = subparsers.add_parser("plan", help="print deterministic execution layers")
+    plan.add_argument("workflow", type=Path)
+    plan.add_argument("--plugin", action="append", default=[], metavar="MODULE")
+
     run = subparsers.add_parser("run", help="run a workflow JSON file")
     run.add_argument("workflow", type=Path)
     run.add_argument("--input", default="{}", metavar="JSON_OR_@FILE")
     run.add_argument("--state", type=Path, help="persist definitions and the last 100 runs")
     run.add_argument("--plugin", action="append", default=[], metavar="MODULE")
+
+    resume = subparsers.add_parser("resume", help="resume an interrupted persisted run")
+    resume.add_argument("run_id")
+    resume.add_argument("--state", type=Path, required=True)
+    resume.add_argument("--plugin", action="append", default=[], metavar="MODULE")
+
+    history = subparsers.add_parser("history", help="list recent persisted runs")
+    history.add_argument("--state", type=Path, required=True)
+    history.add_argument("--workflow")
+    history.add_argument("--limit", type=int, default=20)
+
+    show = subparsers.add_parser("show", help="show one persisted run")
+    show.add_argument("run_id")
+    show.add_argument("--state", type=Path, required=True)
+
+    subparsers.add_parser("schema", help="print the bundled workflow v1 JSON Schema")
 
     demo = subparsers.add_parser("demo", help="run the built-in greeting workflow")
     demo.add_argument("--name", default="world")
@@ -112,10 +133,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(result.to_dict(), indent=2))
             return 0
 
+        if args.command == "schema":
+            schema = resources.files("routine_engine").joinpath("schemas/workflow-v1.schema.json")
+            print(schema.read_text(encoding="utf-8"))
+            return 0
+
+        if args.command == "history":
+            runs = JsonStore(args.state).list_runs(workflow_id=args.workflow, limit=args.limit)
+            print(json.dumps(runs, indent=2))
+            return 0
+
+        if args.command == "show":
+            print(json.dumps(JsonStore(args.state).get_run(args.run_id), indent=2))
+            return 0
+
+        if args.command == "resume":
+            result = _make_engine(args.plugin, args.state).resume(args.run_id)
+            print(json.dumps(result.to_dict(), indent=2, allow_nan=False))
+            return 0 if result.status is RunStatus.SUCCESS else 1
+
         workflow = _load_json(args.workflow)
         if args.command == "validate":
             definition = _make_engine(args.plugin).validate(workflow)
             print(f"valid: {definition.id} ({len(definition.steps)} steps)")
+            return 0
+
+        if args.command == "plan":
+            plan = _make_engine(args.plugin).plan(workflow)
+            print(json.dumps(plan.to_dict(), indent=2))
             return 0
 
         result = _make_engine(args.plugin, args.state).run(workflow, _load_input(args.input))

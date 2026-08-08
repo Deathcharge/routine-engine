@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are currently made on the latest `0.1.x` release candidate and the default branch. The archived top-level `routine_engine/` extraction is not a supported public API and is excluded from distributions.
+Security fixes are currently made on the latest `0.2.x` release candidate and the default branch. The archived top-level `routine_engine/` extraction is not a supported public API and is excluded from distributions.
 
 ## Report a vulnerability
 
@@ -20,4 +20,6 @@ Please do not open a public issue for an undisclosed vulnerability. Samsarix LLC
 
 Workflow definitions are untrusted data; registered actions are trusted application code. Routine Engine validates graph and resource bounds and never evaluates definition-supplied code, commands, imports, SQL, paths, or URLs. It is not a sandbox. Applications are responsible for authorization and validation inside every action they register.
 
-The JSON store is intended for a trusted local filesystem. It provides atomic replacement and in-process locking, not encryption, access control, tamper evidence, or multi-process transactions. Do not persist secrets or sensitive action outputs unless the surrounding filesystem and application controls are appropriate.
+The JSON store is intended for a trusted local filesystem. It provides bounded atomic replacement and in-process locking, not encryption, access control, tamper evidence, or multi-process transactions. Do not persist secrets or sensitive action outputs unless the surrounding filesystem and application controls are appropriate.
+
+Resume provides at-least-once execution. A process may stop after an action performs an external side effect and before its success checkpoint is durable. Side-effecting actions must implement application-level idempotency, normally using the stable run and step IDs supplied in `ActionContext`.

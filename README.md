@@ -4,7 +4,7 @@ Routine Engine is a small, local-first Python library and CLI for deterministic 
 
 The focused use case is application-owned routines: import jobs, report generation, release checks, data preparation, and other bounded workflows that should stay inside an existing Python process or CI job.
 
-> Maturity: **0.1 release candidate.** The supported core is implemented, behaviorally tested, and ready for release review. It has not been published by this repository update.
+> Maturity: **0.2 release candidate.** The supported core, bounded execution contract, and local recovery path are implemented and under release verification. It has not been published by this repository update.
 
 ## Why this exists
 
@@ -78,9 +78,14 @@ The CLI includes three side-effect-free actions: `identity`, `merge`, and `forma
 
 ```bash
 routine-engine demo --name Ada
+routine-engine schema
 routine-engine validate examples/workflow.json
+routine-engine plan examples/workflow.json
 routine-engine run examples/workflow.json --input '{"name":"Ada"}'
 routine-engine run examples/workflow.json --input @input.json --state .routine-state.json
+routine-engine history --state .routine-state.json
+routine-engine show RUN_ID --state .routine-state.json
+routine-engine resume RUN_ID --state .routine-state.json --plugin my_actions
 ```
 
 Application actions can be loaded only from an explicit trusted module:
@@ -101,6 +106,7 @@ Workflow data cannot choose the module that gets imported.
 
 ```json
 {
+  "schema_version": 1,
   "id": "welcome",
   "description": "Prepare a greeting",
   "max_concurrency": 4,
@@ -124,7 +130,11 @@ Workflow data cannot choose the module that gets imported.
 
 References must occupy the complete string. Supported forms are `{{ input.path.to.value }}`, `{{ steps.step_id.output }}`, and `{{ steps.step_id.output.path }}`. Missing references fail the affected step; downstream steps are skipped.
 
-Resource limits are part of the public contract: 256 steps, 32 concurrent actions, 10 retries per step, and 60 seconds maximum configured retry delay. Registered actions are trusted application code; Routine Engine does not sandbox them.
+Resource limits are part of the public contract: 256 steps, 32 concurrent actions, 10 retries per step, 60 seconds maximum configured retry delay, 1 MiB definitions and inputs, 4 MiB step outputs, 32 JSON nesting levels, and 4,096-character errors. Data crossing a workflow boundary must be finite, portable JSON with string object keys.
+
+Synchronous actions run in a bounded worker-thread pool so one blocking action does not freeze the asynchronous scheduler. Cancellation cannot forcibly terminate Python code already executing in a thread. Registered actions remain trusted application code; Routine Engine does not sandbox them.
+
+When `--state` or `JsonStore` is used, the engine writes the run snapshot before starting work and atomically checkpoints every terminal step. If the process is interrupted, `engine.resume(run_id)` (or the CLI `resume` command) reuses successful checkpoints and runs only unfinished steps. Actions with external side effects should still be idempotent: a process can stop after the side effect occurs but before its success checkpoint reaches disk.
 
 ## Development
 
@@ -136,9 +146,10 @@ mypy src
 pytest --cov --cov-report=term-missing
 python -m build
 python -m twine check dist/*
+python benchmarks/benchmark_engine.py --steps 256 --runs 20
 ```
 
-See [Getting Started](docs/GETTING_STARTED.md), [API Reference](docs/API_REFERENCE.md), [Productization](docs/PRODUCTIZATION.md), [Security Policy](SECURITY.md), and [Contributing](CONTRIBUTING.md).
+See [Getting Started](docs/GETTING_STARTED.md), [API Reference](docs/API_REFERENCE.md), [Use Cases](docs/USE_CASES.md), [Competitive Position](docs/COMPETITIVE_ANALYSIS.md), [Security Policy](SECURITY.md), and [Contributing](CONTRIBUTING.md).
 
 ## Scope and legacy source
 

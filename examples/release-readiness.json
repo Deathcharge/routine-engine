@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "release-readiness",
+  "description": "Verify required release evidence and fingerprint important artifacts",
+  "max_concurrency": 2,
+  "steps": [
+    {
+      "id": "required",
+      "action": "release.require_files",
+      "with": {"paths": ["pyproject.toml", "README.md", "CHANGELOG.md", "LICENSE"]}
+    },
+    {
+      "id": "readme",
+      "action": "release.sha256",
+      "needs": ["required"],
+      "with": {"path": "README.md"}
+    },
+    {
+      "id": "license",
+      "action": "release.sha256",
+      "needs": ["required"],
+      "with": {"path": "LICENSE"}
+    },
+    {
+      "id": "evidence",
+      "action": "merge",
+      "needs": ["readme", "license"],
+      "with": {
+        "readme": "{{ steps.readme.output }}",
+        "license": "{{ steps.license.output }}"
+      }
+    }
+  ]
+}

@@ -10,8 +10,10 @@ RoutineEngine(*, store: JsonStore | None = None)
 
 - `register(name, action, *, replace=False)`: add a trusted sync or async callable. Duplicate names fail unless replacement is explicit.
 - `validate(workflow) -> Workflow`: validate shape, bounds, graph, references to registered action names, and return an immutable definition.
+- `plan(workflow) -> ExecutionPlan`: return deterministic topological layers without executing actions.
 - `run(workflow, inputs=None) -> RunResult`: synchronous execution. It cannot be nested inside an active event loop.
 - `await arun(workflow, inputs=None) -> RunResult`: asynchronous execution with bounded parallelism.
+- `resume(run_id) -> RunResult` / `await aresume(run_id)`: continue a persisted active run, reusing its successful step checkpoints.
 - `actions`: sorted tuple of registered names.
 
 ## `ActionContext`
@@ -39,6 +41,11 @@ Limits:
 | Retries per step | 10 |
 | Retry delay | 60 seconds |
 | Description | 1,000 characters |
+| Workflow definition | 1 MiB |
+| Run inputs | 1 MiB |
+| Step output | 4 MiB |
+| JSON depth | 32 levels |
+| Error text | 4,096 characters |
 
 IDs and action names start with a letter and may contain letters, numbers, `.`, `_`, and `-`.
 
@@ -54,9 +61,9 @@ Actions exhausting their retries make the run fail. Steps depending on anything 
 JsonStore(path, *, history_limit=100)
 ```
 
-The store atomically replaces one versioned JSON file. `snapshot()` returns a detached mapping. Invalid/corrupt data and non-JSON action outputs raise `StorageError`; existing state is not silently discarded.
+The store atomically replaces one versioned JSON file, capped at 64 MiB. `snapshot()` returns a detached mapping; `get_run()` and `list_runs()` inspect history. `begin_run()`, `record_step()`, and `finish_run()` form the checkpoint lifecycle used by the engine. Invalid/corrupt data raises `StorageError`; existing state is not silently discarded.
 
-This is local persistence, not a transactional multi-process database.
+State schema v2 reads version 1 definition/history files and migrates them on the next write. Only v2 runs started with a workflow and input snapshot are resumable. This is local persistence, not a transactional multi-process database, and it stores data in plaintext.
 
 ## Exceptions
 

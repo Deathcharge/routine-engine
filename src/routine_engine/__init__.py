@@ -2,14 +2,26 @@
 
 from .engine import Action, RoutineEngine
 from .errors import ActionRegistrationError, RoutineEngineError, StorageError, WorkflowValidationError
-from .models import ActionContext, RunResult, RunStatus, Step, StepResult, StepStatus, Workflow
+from .models import (
+    ActionContext,
+    ExecutionPlan,
+    PlanStep,
+    RunResult,
+    RunStatus,
+    Step,
+    StepResult,
+    StepStatus,
+    Workflow,
+)
 from .storage import JsonStore
 
 __all__ = [
     "Action",
     "ActionContext",
     "ActionRegistrationError",
+    "ExecutionPlan",
     "JsonStore",
+    "PlanStep",
     "RoutineEngine",
     "RoutineEngineError",
     "RunResult",
@@ -22,4 +34,4 @@ __all__ = [
     "WorkflowValidationError",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
