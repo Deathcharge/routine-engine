@@ -46,6 +46,20 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--state", type=Path, help="persist definitions and the last 100 runs")
     run.add_argument("--plugin", action="append", default=[], metavar="MODULE")
 
+    resume = subparsers.add_parser("resume", help="resume an interrupted persisted run")
+    resume.add_argument("run_id")
+    resume.add_argument("--state", type=Path, required=True)
+    resume.add_argument("--plugin", action="append", default=[], metavar="MODULE")
+
+    history = subparsers.add_parser("history", help="list recent persisted runs")
+    history.add_argument("--state", type=Path, required=True)
+    history.add_argument("--workflow")
+    history.add_argument("--limit", type=int, default=20)
+
+    show = subparsers.add_parser("show", help="show one persisted run")
+    show.add_argument("run_id")
+    show.add_argument("--state", type=Path, required=True)
+
     demo = subparsers.add_parser("demo", help="run the built-in greeting workflow")
     demo.add_argument("--name", default="world")
     return parser
@@ -115,6 +129,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = _make_engine([]).run(_demo(), {"name": args.name})
             print(json.dumps(result.to_dict(), indent=2))
             return 0
+
+        if args.command == "history":
+            runs = JsonStore(args.state).list_runs(workflow_id=args.workflow, limit=args.limit)
+            print(json.dumps(runs, indent=2))
+            return 0
+
+        if args.command == "show":
+            print(json.dumps(JsonStore(args.state).get_run(args.run_id), indent=2))
+            return 0
+
+        if args.command == "resume":
+            result = _make_engine(args.plugin, args.state).resume(args.run_id)
+            print(json.dumps(result.to_dict(), indent=2, allow_nan=False))
+            return 0 if result.status is RunStatus.SUCCESS else 1
 
         workflow = _load_json(args.workflow)
         if args.command == "validate":

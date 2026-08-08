@@ -15,6 +15,8 @@ All notable changes will be documented here. The format follows [Keep a Changelo
 ### Added
 
 - Deterministic execution plans through `RoutineEngine.plan()` and the `routine-engine plan` command.
+- Atomic per-step checkpoints and `resume()` / `aresume()` recovery that reuses successful work.
+- `routine-engine history`, `show`, and `resume` commands for persisted local runs.
 - An explicit workflow `schema_version` contract, currently pinned to version 1.
 - Validated acyclic workflow and step models with explicit resource limits.
 - Trusted sync/async action registration, bounded concurrency/retries, references, and exact terminal results.
@@ -27,5 +29,6 @@ All notable changes will be documented here. The format follows [Keep a Changelo
 
 - Bounded workflow definitions, run inputs, step outputs, JSON nesting, and persisted error text.
 - Synchronous actions now run in bounded worker threads so they cannot serialize or block the async scheduler.
+- State storage is capped at 64 MiB and migrates version 1 history forward to the resumable version 2 format.
 
 [Unreleased]: https://github.com/Deathcharge/routine-engine/compare/v0.1.0...HEAD

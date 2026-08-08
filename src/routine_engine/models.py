@@ -329,6 +329,26 @@ class StepResult:
     output: Any = None
     error: str | None = None
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> StepResult:
+        """Restore a validated step checkpoint from trusted engine state."""
+
+        try:
+            step_id = _require_identifier(value["step_id"], "step_id")
+            status = StepStatus(value["status"])
+            attempts = value["attempts"]
+            started_at = datetime.fromisoformat(value["started_at"])
+            finished_at = datetime.fromisoformat(value["finished_at"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise WorkflowValidationError("stored step result is malformed") from exc
+        if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 0:
+            raise WorkflowValidationError("stored step attempts must be a non-negative integer")
+        output = validate_json_payload(value.get("output"), "stored step output", MAX_STEP_OUTPUT_BYTES)
+        error = value.get("error")
+        if error is not None and (not isinstance(error, str) or len(error) > MAX_ERROR_LENGTH):
+            raise WorkflowValidationError("stored step error is malformed")
+        return cls(step_id, status, attempts, started_at, finished_at, output, error)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "step_id": self.step_id,

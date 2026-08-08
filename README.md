@@ -82,6 +82,9 @@ routine-engine validate examples/workflow.json
 routine-engine plan examples/workflow.json
 routine-engine run examples/workflow.json --input '{"name":"Ada"}'
 routine-engine run examples/workflow.json --input @input.json --state .routine-state.json
+routine-engine history --state .routine-state.json
+routine-engine show RUN_ID --state .routine-state.json
+routine-engine resume RUN_ID --state .routine-state.json --plugin my_actions
 ```
 
 Application actions can be loaded only from an explicit trusted module:
@@ -129,6 +132,8 @@ References must occupy the complete string. Supported forms are `{{ input.path.t
 Resource limits are part of the public contract: 256 steps, 32 concurrent actions, 10 retries per step, 60 seconds maximum configured retry delay, 1 MiB definitions and inputs, 4 MiB step outputs, 32 JSON nesting levels, and 4,096-character errors. Data crossing a workflow boundary must be finite, portable JSON with string object keys.
 
 Synchronous actions run in a bounded worker-thread pool so one blocking action does not freeze the asynchronous scheduler. Cancellation cannot forcibly terminate Python code already executing in a thread. Registered actions remain trusted application code; Routine Engine does not sandbox them.
+
+When `--state` or `JsonStore` is used, the engine writes the run snapshot before starting work and atomically checkpoints every terminal step. If the process is interrupted, `engine.resume(run_id)` (or the CLI `resume` command) reuses successful checkpoints and runs only unfinished steps. Actions with external side effects should still be idempotent: a process can stop after the side effect occurs but before its success checkpoint reaches disk.
 
 ## Development
 

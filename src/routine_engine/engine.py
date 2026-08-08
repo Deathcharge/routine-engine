@@ -7,6 +7,7 @@ import inspect
 import re
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
+from datetime import datetime
 from types import MappingProxyType
 from typing import Any
 
@@ -85,32 +86,81 @@ class RoutineEngine:
             layers=tuple(layers),
         )
 
-    def run(self, workflow: Workflow | Mapping[str, Any], inputs: Mapping[str, Any] | None = None) -> RunResult:
+    def run(
+        self,
+        workflow: Workflow | Mapping[str, Any],
+        inputs: Mapping[str, Any] | None = None,
+        *,
+        resume_run_id: str | None = None,
+    ) -> RunResult:
         """Run a workflow from synchronous code."""
 
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(self.arun(workflow, inputs))
+            return asyncio.run(self.arun(workflow, inputs, resume_run_id=resume_run_id))
         raise RuntimeError("RoutineEngine.run() cannot be called inside an event loop; use 'await arun(...)'")
+
+    def resume(self, run_id: str) -> RunResult:
+        """Resume an interrupted persisted run from its successful checkpoints."""
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.aresume(run_id))
+        raise RuntimeError("RoutineEngine.resume() cannot be called inside an event loop; use 'await aresume(...)'")
+
+    async def aresume(self, run_id: str) -> RunResult:
+        """Asynchronously resume an interrupted persisted run."""
+
+        if self._store is None:
+            raise WorkflowValidationError("resuming a run requires a JsonStore")
+        record = self._store.get_run(run_id)
+        workflow = record.get("workflow")
+        inputs = record.get("inputs")
+        if not isinstance(workflow, Mapping) or not isinstance(inputs, Mapping):
+            raise WorkflowValidationError(f"run '{run_id}' does not contain a resumable snapshot")
+        return await self.arun(workflow, inputs, resume_run_id=run_id)
 
     async def arun(
         self,
         workflow: Workflow | Mapping[str, Any],
         inputs: Mapping[str, Any] | None = None,
+        *,
+        resume_run_id: str | None = None,
     ) -> RunResult:
         """Run a workflow and return exact per-step terminal states."""
 
         definition = self.validate(workflow)
         run_inputs = validate_json_payload(dict(inputs or {}), "run inputs", MAX_INPUT_BYTES)
-        run_id = uuid.uuid4().hex
+        run_id = resume_run_id or uuid.uuid4().hex
         started_at = utc_now()
-        pending = {step.id: step for step in definition.steps}
         results: dict[str, StepResult] = {}
+        if resume_run_id is not None:
+            if self._store is None:
+                raise WorkflowValidationError("resuming a run requires a JsonStore")
+            record = self._store.get_run(resume_run_id)
+            if record.get("status") != "running":
+                raise WorkflowValidationError(f"run '{resume_run_id}' is not resumable")
+            if record.get("workflow") != definition.to_dict() or record.get("inputs") != run_inputs:
+                raise WorkflowValidationError("resume workflow and inputs do not match the persisted snapshot")
+            try:
+                started_at = datetime.fromisoformat(record["started_at"])
+                stored_steps = record["steps"]
+                if not isinstance(stored_steps, Mapping):
+                    raise TypeError
+                restored = (StepResult.from_dict(value) for value in stored_steps.values())
+                results = {
+                    item.step_id: item for item in restored if item.status is StepStatus.SUCCESS
+                }
+            except (KeyError, TypeError, ValueError, WorkflowValidationError) as exc:
+                raise WorkflowValidationError(f"run '{resume_run_id}' has invalid checkpoint data") from exc
+        pending = {step.id: step for step in definition.steps if step.id not in results}
         running: dict[str, asyncio.Task[StepResult]] = {}
 
         if self._store is not None:
-            self._store.save_workflow(definition)
+            if resume_run_id is None:
+                self._store.begin_run(run_id, definition, run_inputs, started_at.isoformat())
 
         try:
             while pending or running:
@@ -129,6 +179,8 @@ class RoutineEngine:
                             finished_at=now,
                             error="dependency did not succeed",
                         )
+                        if self._store is not None:
+                            self._store.record_step(run_id, results[step_id])
                         del pending[step_id]
 
                 capacity = definition.max_concurrency - len(running)
@@ -157,6 +209,8 @@ class RoutineEngine:
                 for task in done:
                     step_result = task.result()
                     results[step_result.step_id] = step_result
+                    if self._store is not None:
+                        self._store.record_step(run_id, step_result)
                     del running[step_result.step_id]
         except asyncio.CancelledError:
             for task in running.values():
@@ -181,7 +235,7 @@ class RoutineEngine:
                 steps=MappingProxyType(_ordered_results(definition, results)),
             )
             if self._store is not None:
-                self._store.append_run(cancelled)
+                self._store.finish_run(cancelled)
             raise
 
         status = RunStatus.FAILED if any(r.status is StepStatus.FAILED for r in results.values()) else RunStatus.SUCCESS
@@ -194,7 +248,7 @@ class RoutineEngine:
             steps=MappingProxyType(_ordered_results(definition, results)),
         )
         if self._store is not None:
-            self._store.append_run(result)
+            self._store.finish_run(result)
         return result
 
     async def _run_step(
