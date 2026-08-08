@@ -116,8 +116,13 @@ def test_cli_validate_run_demo_and_version(tmp_path: Path, capsys: pytest.Captur
     assert raised.value.code == 0
 
 
-def test_bundled_schema_and_release_consumer(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_bundled_schema_and_release_consumer(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repository = Path(__file__).parents[1]
+    monkeypatch.syspath_prepend(str(repository))
     source_schema = json.loads(
         (repository / "schemas" / "workflow-v1.schema.json").read_text(encoding="utf-8")
     )
