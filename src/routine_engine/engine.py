@@ -4,20 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import re
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import nullcontext
+from copy import deepcopy
 from datetime import datetime
 from types import MappingProxyType
 from typing import Any
 
 from .errors import ActionRegistrationError, WorkflowValidationError
 from .models import (
-    ActionContext,
-    ExecutionPlan,
     MAX_ERROR_LENGTH,
     MAX_INPUT_BYTES,
     MAX_STEP_OUTPUT_BYTES,
+    ActionContext,
+    ExecutionPlan,
     PlanStep,
     RunResult,
     RunStatus,
@@ -59,7 +62,27 @@ class RoutineEngine:
     def validate(self, workflow: Workflow | Mapping[str, Any]) -> Workflow:
         """Validate structure, dependency graph, and action registrations."""
 
-        definition = workflow if isinstance(workflow, Workflow) else Workflow.from_dict(workflow)
+        if isinstance(workflow, Workflow):
+            # Public dataclass constructors are not validators. Do not trust even
+            # a previously validated object: its nested values can be mutated.
+            workflow = {
+                "id": workflow.id,
+                "schema_version": workflow.schema_version,
+                "description": workflow.description,
+                "max_concurrency": workflow.max_concurrency,
+                "steps": [
+                    {
+                        "id": step.id,
+                        "action": step.action,
+                        "needs": list(step.needs),
+                        "with": dict(step.params),
+                        "retries": step.retries,
+                        "retry_delay_seconds": step.retry_delay_seconds,
+                    }
+                    for step in workflow.steps
+                ],
+            }
+        definition = Workflow.from_dict(workflow)
         missing = sorted({step.action for step in definition.steps} - self._actions.keys())
         if missing:
             raise WorkflowValidationError(f"unregistered action(s): {', '.join(missing)}")
@@ -108,7 +131,9 @@ class RoutineEngine:
             asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(self.aresume(run_id))
-        raise RuntimeError("RoutineEngine.resume() cannot be called inside an event loop; use 'await aresume(...)'")
+        raise RuntimeError(
+            "RoutineEngine.resume() cannot be called inside an event loop; use 'await aresume(...)'"
+        )
 
     async def aresume(self, run_id: str) -> RunResult:
         """Asynchronously resume an interrupted persisted run."""
@@ -131,9 +156,24 @@ class RoutineEngine:
     ) -> RunResult:
         """Run a workflow and return exact per-step terminal states."""
 
+        run_id = resume_run_id if resume_run_id is not None else uuid.uuid4().hex
+        claim = self._store.claim_run(run_id) if self._store is not None else nullcontext()
+        with claim:
+            return await self._execute(workflow, inputs, run_id, resume_run_id)
+
+    async def _execute(
+        self,
+        workflow: Workflow | Mapping[str, Any],
+        inputs: Mapping[str, Any] | None,
+        run_id: str,
+        resume_run_id: str | None,
+    ) -> RunResult:
         definition = self.validate(workflow)
-        run_inputs = validate_json_payload(dict(inputs or {}), "run inputs", MAX_INPUT_BYTES)
-        run_id = resume_run_id or uuid.uuid4().hex
+        if inputs is not None and not isinstance(inputs, Mapping):
+            raise WorkflowValidationError("run inputs must be a JSON object")
+        run_inputs = validate_json_payload(
+            dict(inputs) if inputs is not None else {}, "run inputs", MAX_INPUT_BYTES
+        )
         started_at = utc_now()
         results: dict[str, StepResult] = {}
         if resume_run_id is not None:
@@ -142,25 +182,42 @@ class RoutineEngine:
             record = self._store.get_run(resume_run_id)
             if record.get("status") != "running":
                 raise WorkflowValidationError(f"run '{resume_run_id}' is not resumable")
-            if record.get("workflow") != definition.to_dict() or record.get("inputs") != run_inputs:
-                raise WorkflowValidationError("resume workflow and inputs do not match the persisted snapshot")
+            if json.dumps(record.get("workflow"), sort_keys=True) != json.dumps(
+                definition.to_dict(), sort_keys=True
+            ) or json.dumps(record.get("inputs"), sort_keys=True) != json.dumps(run_inputs, sort_keys=True):
+                raise WorkflowValidationError(
+                    "resume workflow and inputs do not match the persisted snapshot"
+                )
             try:
                 started_at = datetime.fromisoformat(record["started_at"])
+                if started_at.tzinfo is None:
+                    raise ValueError("run timestamp must be timezone-aware")
                 stored_steps = record["steps"]
                 if not isinstance(stored_steps, Mapping):
                     raise TypeError
-                restored = (StepResult.from_dict(value) for value in stored_steps.values())
-                results = {
-                    item.step_id: item for item in restored if item.status is StepStatus.SUCCESS
-                }
+                steps_by_id = {step.id: step for step in definition.steps}
+                for key, value in stored_steps.items():
+                    item = StepResult.from_dict(value)
+                    if key != item.step_id or key not in steps_by_id:
+                        raise ValueError("checkpoint step ID mismatch")
+                    if item.attempts > steps_by_id[key].retries + 1:
+                        raise ValueError("checkpoint exceeds configured retry budget")
+                    # Recovery must not reset exhausted retry budgets or rerun
+                    # terminal failures after a crash before finish_run().
+                    results[key] = item
+                for key, item in results.items():
+                    if item.status is StepStatus.SUCCESS and any(
+                        dep not in results or results[dep].status is not StepStatus.SUCCESS
+                        for dep in steps_by_id[key].needs
+                    ):
+                        raise ValueError("successful checkpoint is missing successful dependencies")
             except (KeyError, TypeError, ValueError, WorkflowValidationError) as exc:
                 raise WorkflowValidationError(f"run '{resume_run_id}' has invalid checkpoint data") from exc
         pending = {step.id: step for step in definition.steps if step.id not in results}
         running: dict[str, asyncio.Task[StepResult]] = {}
 
-        if self._store is not None:
-            if resume_run_id is None:
-                self._store.begin_run(run_id, definition, run_inputs, started_at.isoformat())
+        if self._store is not None and resume_run_id is None:
+            self._store.begin_run(run_id, definition, run_inputs, started_at.isoformat())
 
         try:
             while pending or running:
@@ -237,8 +294,22 @@ class RoutineEngine:
             if self._store is not None:
                 self._store.finish_run(cancelled)
             raise
+        except BaseException:
+            # A checkpoint failure must not leak actions into the caller's loop.
+            # Leave the last durable record active so recovery remains possible.
+            for task in running.values():
+                task.cancel()
+            await asyncio.gather(*running.values(), return_exceptions=True)
+            raise
 
-        status = RunStatus.FAILED if any(r.status is StepStatus.FAILED for r in results.values()) else RunStatus.SUCCESS
+        if any(r.status is StepStatus.CANCELLED for r in results.values()):
+            status = RunStatus.CANCELLED
+        else:
+            status = (
+                RunStatus.SUCCESS
+                if all(r.status is StepStatus.SUCCESS for r in results.values())
+                else RunStatus.FAILED
+            )
         result = RunResult(
             run_id=run_id,
             workflow_id=definition.id,
@@ -270,7 +341,7 @@ class RoutineEngine:
                 attempts=0,
                 started_at=started_at,
                 finished_at=utc_now(),
-                error=f"ParameterResolutionError: {exc}",
+                error=_format_error(exc, prefix="ParameterResolutionError"),
             )
 
         action = self._actions[step.action]
@@ -281,9 +352,9 @@ class RoutineEngine:
                 workflow_id=workflow.id,
                 step_id=step.id,
                 attempt=attempt,
-                inputs=MappingProxyType(dict(inputs)),
-                params=MappingProxyType(params),
-                outputs=MappingProxyType(output_values),
+                inputs=MappingProxyType(deepcopy(dict(inputs))),
+                params=MappingProxyType(deepcopy(params)),
+                outputs=MappingProxyType(deepcopy(output_values)),
             )
             try:
                 if inspect.iscoroutinefunction(action):
@@ -319,8 +390,12 @@ def _ordered_results(workflow: Workflow, results: Mapping[str, StepResult]) -> d
     return {step.id: results[step.id] for step in workflow.steps}
 
 
-def _format_error(exc: Exception) -> str:
-    message = f"{type(exc).__name__}: {exc}".replace("\r", "\\r").replace("\n", "\\n")
+def _format_error(exc: Exception, *, prefix: str | None = None) -> str:
+    try:
+        detail = str(exc)
+    except Exception:
+        detail = "exception message unavailable"
+    message = f"{prefix or type(exc).__name__}: {detail}".replace("\r", "\\r").replace("\n", "\\n")
     if len(message) <= MAX_ERROR_LENGTH:
         return message
     suffix = "... [truncated]"
@@ -329,7 +404,7 @@ def _format_error(exc: Exception) -> str:
 
 def _resolve_value(value: Any, inputs: Mapping[str, Any], outputs: Mapping[str, Any]) -> Any:
     if isinstance(value, str):
-        match = _REFERENCE.fullmatch(value)
+        match = _REFERENCE.fullmatch(value.strip())
         if match is None:
             return value
         scope, path = match.groups()

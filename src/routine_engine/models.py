@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any
 
 from .errors import WorkflowValidationError
 
@@ -23,9 +24,7 @@ MAX_STEP_OUTPUT_BYTES = 4_194_304
 MAX_JSON_DEPTH = 32
 MAX_ERROR_LENGTH = 4096
 _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
-_INPUT_REFERENCE = re.compile(
-    r"^\{\{\s*input\.[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9_-]*)*\s*\}\}$"
-)
+_INPUT_REFERENCE = re.compile(r"^\{\{\s*input\.[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9_-]*)*\s*\}\}$")
 
 
 def utc_now() -> datetime:
@@ -46,33 +45,43 @@ def validate_json_payload(value: Any, field_name: str, max_bytes: int) -> Any:
     """Validate, bound, and detach portable JSON data."""
 
     stack: list[tuple[Any, int]] = [(value, 1)]
-    seen: set[int] = set()
+    seen_depth: dict[int, int] = {}
     while stack:
         current, depth = stack.pop()
         if isinstance(current, Mapping):
             if depth > MAX_JSON_DEPTH:
-                raise WorkflowValidationError(f"{field_name} exceeds the maximum JSON depth of {MAX_JSON_DEPTH}")
-            if id(current) in seen:
+                raise WorkflowValidationError(
+                    f"{field_name} exceeds the maximum JSON depth of {MAX_JSON_DEPTH}"
+                )
+            if seen_depth.get(id(current), 0) >= depth:
                 continue
-            seen.add(id(current))
+            seen_depth[id(current)] = depth
             if not all(isinstance(key, str) for key in current):
                 raise WorkflowValidationError(f"{field_name} must use string object keys")
             stack.extend((item, depth + 1) for item in current.values())
         elif isinstance(current, (list, tuple)):
             if depth > MAX_JSON_DEPTH:
-                raise WorkflowValidationError(f"{field_name} exceeds the maximum JSON depth of {MAX_JSON_DEPTH}")
-            if id(current) in seen:
+                raise WorkflowValidationError(
+                    f"{field_name} exceeds the maximum JSON depth of {MAX_JSON_DEPTH}"
+                )
+            if seen_depth.get(id(current), 0) >= depth:
                 continue
-            seen.add(id(current))
+            seen_depth[id(current)] = depth
             stack.extend((item, depth + 1) for item in current)
     try:
-        payload = json.dumps(value, allow_nan=False, separators=(",", ":"), sort_keys=True)
+        chunks: list[str] = []
+        size = 0
+        encoder = json.JSONEncoder(allow_nan=False, separators=(",", ":"), sort_keys=True)
+        for chunk in encoder.iterencode(value):
+            size += len(chunk.encode("utf-8"))
+            if size > max_bytes:
+                raise WorkflowValidationError(f"{field_name} exceeds the maximum size of {max_bytes} bytes")
+            chunks.append(chunk)
+    except WorkflowValidationError:
+        raise
     except (TypeError, ValueError, OverflowError, RecursionError) as exc:
         raise WorkflowValidationError(f"{field_name} must be finite, JSON-compatible data") from exc
-    size = len(payload.encode("utf-8"))
-    if size > max_bytes:
-        raise WorkflowValidationError(f"{field_name} exceeds the maximum size of {max_bytes} bytes")
-    return json.loads(payload)
+    return json.loads("".join(chunks))
 
 
 class StepStatus(str, Enum):
@@ -135,7 +144,9 @@ class Step:
 
         retries = value.get("retries", 0)
         if isinstance(retries, bool) or not isinstance(retries, int) or not 0 <= retries <= MAX_RETRIES:
-            raise WorkflowValidationError(f"steps[{index}].retries must be an integer from 0 to {MAX_RETRIES}")
+            raise WorkflowValidationError(
+                f"steps[{index}].retries must be an integer from 0 to {MAX_RETRIES}"
+            )
 
         delay = value.get("retry_delay_seconds", 0.0)
         if isinstance(delay, bool) or not isinstance(delay, (int, float)):
@@ -184,10 +195,8 @@ class Workflow:
             raise WorkflowValidationError("workflow must be a JSON object")
         detached = validate_json_payload(dict(value), "workflow", MAX_WORKFLOW_BYTES)
         schema_version = detached.get("schema_version", WORKFLOW_SCHEMA_VERSION)
-        if isinstance(schema_version, bool) or schema_version != WORKFLOW_SCHEMA_VERSION:
-            raise WorkflowValidationError(
-                f"schema_version must be the integer {WORKFLOW_SCHEMA_VERSION}"
-            )
+        if type(schema_version) is not int or schema_version != WORKFLOW_SCHEMA_VERSION:
+            raise WorkflowValidationError(f"schema_version must be the integer {WORKFLOW_SCHEMA_VERSION}")
         value = detached
         unknown = set(value) - {"schema_version", "id", "description", "max_concurrency", "steps"}
         if unknown:
@@ -256,7 +265,11 @@ def _validate_acyclic(steps: tuple[Step, ...]) -> None:
     dependencies = {step.id: set(step.needs) for step in steps}
     complete: set[str] = set()
     while len(complete) < len(steps):
-        ready = {step_id for step_id, needs in dependencies.items() if step_id not in complete and needs <= complete}
+        ready = {
+            step_id
+            for step_id, needs in dependencies.items()
+            if step_id not in complete and needs <= complete
+        }
         if not ready:
             blocked = ", ".join(sorted(set(dependencies) - complete))
             raise WorkflowValidationError(f"workflow contains a dependency cycle involving: {blocked}")
@@ -348,6 +361,8 @@ class StepResult:
     def from_dict(cls, value: Mapping[str, Any]) -> StepResult:
         """Restore a validated step checkpoint from trusted engine state."""
 
+        if not isinstance(value, Mapping):
+            raise WorkflowValidationError("stored step result must be an object")
         try:
             step_id = _require_identifier(value["step_id"], "step_id")
             status = StepStatus(value["status"])
@@ -356,8 +371,16 @@ class StepResult:
             finished_at = datetime.fromisoformat(value["finished_at"])
         except (KeyError, TypeError, ValueError) as exc:
             raise WorkflowValidationError("stored step result is malformed") from exc
-        if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 0:
+        if (
+            isinstance(attempts, bool)
+            or not isinstance(attempts, int)
+            or not 0 <= attempts <= MAX_RETRIES + 1
+        ):
             raise WorkflowValidationError("stored step attempts must be a non-negative integer")
+        if started_at.tzinfo is None or finished_at.tzinfo is None or finished_at < started_at:
+            raise WorkflowValidationError("stored step timestamps must be ordered and timezone-aware")
+        if status is StepStatus.SUCCESS and attempts == 0:
+            raise WorkflowValidationError("stored successful step must have at least one attempt")
         output = validate_json_payload(value.get("output"), "stored step output", MAX_STEP_OUTPUT_BYTES)
         error = value.get("error")
         if error is not None and (not isinstance(error, str) or len(error) > MAX_ERROR_LENGTH):
