@@ -6,15 +6,16 @@ import argparse
 import importlib
 import json
 import sys
+from collections.abc import Sequence
 from importlib import resources
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from .builtins import register_builtin_actions
 from .engine import RoutineEngine
 from .errors import RoutineEngineError, WorkflowValidationError
-from .models import RunStatus
+from .models import MAX_INPUT_BYTES, MAX_WORKFLOW_BYTES, RunStatus
 from .storage import JsonStore
 
 
@@ -22,7 +23,7 @@ def _version() -> str:
     try:
         return version("samsarix-routine-engine")
     except PackageNotFoundError:
-        return "0.2.0"
+        return "0.2.1"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -68,12 +69,16 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _load_json(path: Path) -> dict[str, Any]:
+def _load_json(path: Path, max_bytes: int = MAX_WORKFLOW_BYTES) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        with path.open("rb") as handle:
+            raw = handle.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            raise WorkflowValidationError(f"'{path}' exceeds {max_bytes} bytes")
+        value = json.loads(raw.decode("utf-8"))
     except OSError as exc:
         raise WorkflowValidationError(f"cannot read '{path}': {exc}") from exc
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeError, RecursionError) as exc:
         raise WorkflowValidationError(f"'{path}' is not valid JSON: {exc}") from exc
     if not isinstance(value, dict):
         raise WorkflowValidationError(f"'{path}' must contain a JSON object")
@@ -82,10 +87,12 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _load_input(raw: str) -> dict[str, Any]:
     if raw.startswith("@"):
-        return _load_json(Path(raw[1:]))
+        return _load_json(Path(raw[1:]), MAX_INPUT_BYTES)
+    if len(raw.encode("utf-8")) > MAX_INPUT_BYTES:
+        raise WorkflowValidationError(f"--input exceeds {MAX_INPUT_BYTES} bytes")
     try:
         value = json.loads(raw)
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, RecursionError) as exc:
         raise WorkflowValidationError(f"--input is not valid JSON: {exc}") from exc
     if not isinstance(value, dict):
         raise WorkflowValidationError("--input must be a JSON object")
