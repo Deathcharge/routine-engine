@@ -9,10 +9,11 @@ Install the repository checkout:
 
 ```bash
 python -m venv .venv
-.venv/Scripts/python -m pip install -e ".[dev]"  # Windows
+.venv/Scripts/Activate.ps1  # PowerShell on Windows
+python -m pip install -e ".[dev]"
 ```
 
-On macOS or Linux, use `.venv/bin/python` instead.
+On macOS or Linux, activate with `source .venv/bin/activate` instead. If activation is unavailable, call `.venv/Scripts/python -m routine_engine ...` (Windows) or `.venv/bin/python -m routine_engine ...` (Unix) directly.
 
 ## Run the built-in journey
 
@@ -52,7 +53,9 @@ routine-engine validate workflow.json
 routine-engine run workflow.json --input '{"name":"Ada"}' --state .routine-state.json
 ```
 
-`--state` is optional. It stores definitions and at most 100 recent results using same-directory atomic replacement. One store instance is thread-safe; coordinate separately if multiple processes write the same file.
+`--state` is optional. It stores definitions and at most 100 run records using same-directory atomic replacement. Unfinished records are never pruned; a full store of unfinished runs rejects new runs. Share one store instance per file; coordinate separately if other instances or processes write the same file.
+
+Inspect a run with `routine-engine history --state .routine-state.json` and `routine-engine show RUN_ID --state .routine-state.json`. To continue a process-interrupted run, use `routine-engine resume RUN_ID --state .routine-state.json` with the same trusted plugins. Explicitly cancelled, successful, and failed runs are terminal and cannot be resumed.
 
 ## Register application actions
 

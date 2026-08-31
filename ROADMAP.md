@@ -8,7 +8,7 @@ Routine Engine is a reusable, independently versioned SDK for bounded applicatio
 
 ## Version 0.2 release candidate
 
-Implemented on the 0.2 branch:
+The 0.2 baseline was merged through [PR #2](https://github.com/Deathcharge/routine-engine/pull/2). Implemented:
 
 - Explicit workflow schema v1 and a distributable JSON Schema.
 - Deterministic execution plans and a CI-friendly `plan` command.
@@ -18,12 +18,16 @@ Implemented on the 0.2 branch:
 - State schema v2 with version 1 migration and a 64 MiB cap.
 - A release-readiness consumer fixture and evidence-backed competitive boundary.
 
-Release gates still required:
+The 0.2.1 wrap-up adds active-run retention, strict recovery validation, async cleanup after storage errors, per-attempt context isolation, bounded CLI reads, and self-contained source distributions. It also corrects the archive exclusion so lint covers the supported source.
+
+Repository release gates (required for every patch, automated in CI):
 
 - Build and inspect both sdist and wheel from a clean tree.
 - Install the wheel into a clean environment and run API, CLI, schema, and consumer smoke tests.
 - Pass the supported Python matrix, lint, formatting, strict typing, branch coverage, dependency audit, and source security scan.
 - Record the exact commit, artifact digests, hosted checks, and rollback ref in the release pull request.
+
+Use [the release checklist](docs/RELEASING.md) for exact commands and compatibility expectations. These engineering gates do not imply public package publication or production deployment.
 
 ## Publication
 
@@ -48,6 +52,8 @@ Publication is a separate owner decision. Before publishing to a package index:
 - First-class idempotency metadata and application-defined compensation hooks.
 - Structured lifecycle events for observability adapters.
 - A documented schema/version deprecation policy before 1.0.
+
+The current pre-1.0 compatibility policy is documented in the release checklist. A long-term 1.0 support/deprecation window remains an owner decision.
 
 ## Completion evidence
 

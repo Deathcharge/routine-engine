@@ -4,6 +4,19 @@ All notable changes will be documented here. The format follows [Keep a Changelo
 
 ## [Unreleased]
 
+## 0.2.1 - 2026-08-31
+
+### Fixed
+
+- Revalidate public workflow objects, reject non-object inputs and non-integer schema versions, and bound CLI reads before JSON parsing.
+- Preserve active history and reject duplicate IDs and overlapping same-store execution.
+- Validate checkpoint structure/dependencies and preserve terminal failures across process recovery instead of resetting retry budgets.
+- Cancel and await async actions on persistence failures; detach nested action context per attempt.
+- Resolve whitespace-wrapped references consistently and keep malformed exception messages within the step-error contract.
+- Include test fixtures, schemas, examples, and documentation in source distributions; verify source archives and installed wheels outside the checkout.
+- Correct the Ruff archive exclusion so supported source code is actually linted; pin CI action revisions and retain verified artifacts.
+- Document recovery limitations, plugin import setup, compatibility, and owner-controlled publication gates.
+
 ## [0.2.0] - 2026-08-08
 
 ### Changed
@@ -35,5 +48,5 @@ All notable changes will be documented here. The format follows [Keep a Changelo
 - Synchronous actions now run in bounded worker threads so they cannot serialize or block the async scheduler.
 - State storage is capped at 64 MiB and migrates version 1 history forward to the resumable version 2 format.
 
-[Unreleased]: https://github.com/Deathcharge/routine-engine/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/Deathcharge/routine-engine/compare/v0.1.0...v0.2.0
+[Unreleased]: https://github.com/Deathcharge/routine-engine/commits/main
+[0.2.0]: https://github.com/Deathcharge/routine-engine/pull/2

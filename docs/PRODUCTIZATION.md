@@ -1,8 +1,8 @@
 # Productization decision record
 
-- Date: 2026-07-28
+- Last updated: 2026-08-31
 - Owner: Samsarix LLC
-Product: Samsarix Routine Engine
+- Product: Samsarix Routine Engine
 
 ## Executive decision
 
@@ -53,6 +53,7 @@ Primary references:
 - exact step/run status and timestamps
 - optional atomic, bounded local JSON history
 - CLI validation, execution, demo, explicit plugins, and meaningful exit codes
+- versioned workflow schema, deterministic plans, and per-step local recovery
 
 ## Explicitly out of scope
 
@@ -87,3 +88,25 @@ Registration remains a privileged boundary: a dangerous registered action is dan
 The engineering release candidate includes the library, CLI, examples, behavioral test suite, strict lint/type configuration, coverage threshold, build checks, wheel smoke test, CI matrix, security policy, changelog, and truthful docs.
 
 At the owner's direction on 2026-07-29, the existing BSL parameters were updated to identify Samsarix LLC, Samsarix Routine Engine, the 2026 copyright, and `contact@samsarix.com`. The production-use threshold, June 16, 2027 change date, and Apache License 2.0 change license were preserved. Public package upload and release tagging remain separate owner-authorized actions and are not part of this productization commit.
+
+## 0.2.1 wrap-up audit
+
+Baseline: `e4d1f17` on clean `main`; 48 tests passed with Python 3.11. The new failure-path suite reproduced 13 failing cases before the fixes. Passing the old suite had not established these invariants.
+
+Locally actionable findings and fixes:
+
+| Priority | Finding | Resolution |
+| --- | --- | --- |
+| P0 | History pruning could discard active checkpoints | Evict only terminal history; reject new runs when active capacity is full |
+| P1 | Storage errors leaked asynchronous work after caller failure | Cancel and await outstanding tasks; keep the last durable checkpoint resumable |
+| P1 | Direct workflow constructors bypassed graph/resource validation | Revalidate and detach workflow values at every engine entry |
+| P1 | Resume could repeat exhausted failures, accept inconsistent checkpoints, or overlap execution | Preserve terminal outcomes; validate dependencies/IDs/types/budgets; same-store run claims |
+| P1 | Nested action mutation changed earlier results and retry inputs | Detached per-attempt contexts |
+| P1 | CLI JSON was parsed before bounded reads and could raise raw recursion errors | Bounded binary reads and actionable parsing failures |
+| P1 | Source archive omitted fixtures/examples/docs required by its own tests | Explicit manifest and extracted-sdist test gate |
+| P1 | Ruff basename exclusion also skipped supported source | Root-relative legacy exclusion, verified file selection |
+| P2 | Plugin setup and release-state documentation drifted | Correct module invocation, compatibility/publication checklist, updated roadmap |
+
+Acceptance now includes a real child-process exit followed by resume, full source-archive tests in a temporary directory, and wheel-only CLI/schema/consumer execution without checkout imports. CI retains verified artifacts keyed to its commit. Exact wrap-up verification and hashes are recorded in the wrap-up PR; commands are in [RELEASING.md](RELEASING.md).
+
+Remaining gates: explicit package-index publishing authorization/identity and license-policy confirmation, plus production adoption in a consumer-owned environment. No credential, infrastructure, package upload, or license change is needed for local evaluation. Highest-value later work is a real application adapter, then optional persistence backends/timeouts—not a new UI or control plane.

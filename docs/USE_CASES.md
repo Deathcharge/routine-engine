@@ -7,9 +7,11 @@ Routine Engine is designed for application-owned workflows that need explicit de
 The repository includes a real consumer fixture in `examples/release-readiness.json`. Its trusted plugin verifies required release files, fingerprints artifacts in parallel, and produces structured evidence. Run it from the repository root:
 
 ```bash
-routine-engine plan examples/release-readiness.json --plugin examples.release_actions
-routine-engine run examples/release-readiness.json --plugin examples.release_actions --state .routine-state.json
+python -m routine_engine plan examples/release-readiness.json --plugin examples.release_actions
+python -m routine_engine run examples/release-readiness.json --plugin examples.release_actions --state .routine-state.json
 ```
+
+Use `python -m routine_engine` here so the repository root (containing the example consumer module) is on the import path. In a deployed application, install your trusted plugin as a normal Python package. The engine does not automatically add untrusted workflow directories to its import path.
 
 This pattern fits package publication, signed-build preparation, compliance evidence, and deployment preflight checks. The workflow stays declarative while file access remains in reviewed application code.
 
@@ -28,7 +30,7 @@ The `plan`, `validate`, and `run` commands are machine-friendly and require no d
 ## Correctness boundary
 
 - Registered actions are trusted code and are not sandboxed.
-- Persistence is local and single-process; use an external coordinator for concurrent writers.
+- Persistence is local; share one store instance per file and externally coordinate other instances or processes. Same-instance concurrent resume of an executing run is rejected.
 - Successful checkpoints provide at-least-once recovery, not exactly-once side effects. Side-effecting actions should use application-level idempotency keys based on `context.run_id` and `context.step_id`.
 - Inputs, outputs, and state may contain sensitive data and are stored as plaintext JSON. Applications own redaction, file permissions, and retention.
 - Distributed queues, calendars, event triggers, dashboards, and multi-tenant control planes remain intentionally out of scope.

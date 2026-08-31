@@ -4,7 +4,7 @@ Routine Engine is a small, local-first Python library and CLI for deterministic 
 
 The focused use case is application-owned routines: import jobs, report generation, release checks, data preparation, and other bounded workflows that should stay inside an existing Python process or CI job.
 
-> Maturity: **0.2 release candidate.** The supported core, bounded execution contract, and local recovery path are implemented and under release verification. It has not been published by this repository update.
+> Maturity: **0.2.1 release candidate.** A tested local library and CLI for trusted application routines. Repository installation is supported; package-index publication and production adoption remain separate owner decisions.
 
 ## Why this exists
 
@@ -134,7 +134,9 @@ Resource limits are part of the public contract: 256 steps, 32 concurrent action
 
 Synchronous actions run in a bounded worker-thread pool so one blocking action does not freeze the asynchronous scheduler. Cancellation cannot forcibly terminate Python code already executing in a thread. Registered actions remain trusted application code; Routine Engine does not sandbox them.
 
-When `--state` or `JsonStore` is used, the engine writes the run snapshot before starting work and atomically checkpoints every terminal step. If the process is interrupted, `engine.resume(run_id)` (or the CLI `resume` command) reuses successful checkpoints and runs only unfinished steps. Actions with external side effects should still be idempotent: a process can stop after the side effect occurs but before its success checkpoint reaches disk.
+When `--state` or `JsonStore` is used, the engine writes the run snapshot before starting work and atomically checkpoints every terminal step. If the process is interrupted, `engine.resume(run_id)` (or the CLI `resume` command) keeps all terminal checkpoints, including exhausted failures, and runs only unfinished steps. Finished or explicitly cancelled runs cannot be resumed; start a new run instead. Actions with external side effects must be idempotent: a process can stop after the side effect occurs but before its success checkpoint reaches disk.
+
+History pruning removes terminal runs only. If all history slots are occupied by unfinished runs, new runs fail before actions start; finish those runs or increase `history_limit`. Use one shared `JsonStore` instance per file and externally coordinate other instances/processes. State is plaintext; do not pass secrets through persisted inputs or outputs. Resume restores data, not Python code: use the same trusted action implementation and external resources as the original run.
 
 ## Development
 
@@ -146,10 +148,13 @@ mypy src
 pytest --cov --cov-report=term-missing
 python -m build
 python -m twine check dist/*
+python scripts/verify_release.py --dist dist
 python benchmarks/benchmark_engine.py --steps 256 --runs 20
 ```
 
-See [Getting Started](docs/GETTING_STARTED.md), [API Reference](docs/API_REFERENCE.md), [Use Cases](docs/USE_CASES.md), [Competitive Position](docs/COMPETITIVE_ANALYSIS.md), [Security Policy](SECURITY.md), and [Contributing](CONTRIBUTING.md).
+The release verifier requires exactly one wheel and one source archive in its artifact directory. Use a fresh directory (`python -m build --outdir dist/0.2.1`) when older builds exist, then pass that directory to the verifier.
+
+See [Getting Started](docs/GETTING_STARTED.md), [API Reference](docs/API_REFERENCE.md), [Use Cases](docs/USE_CASES.md), [Release Checklist](docs/RELEASING.md), [Competitive Position](docs/COMPETITIVE_ANALYSIS.md), and [Security Policy](SECURITY.md).
 
 ## Scope and legacy source
 
